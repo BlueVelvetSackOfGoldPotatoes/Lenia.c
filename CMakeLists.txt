@@ -14,6 +14,7 @@ add_library(lenia_core STATIC
     src/lenia_multichannel.cpp
     src/lenia_discovery.cpp
     src/lenia_analysis.cpp
+    src/lenia_particle.cpp
 )
 target_include_directories(lenia_core PUBLIC include)
 target_compile_options(lenia_core PRIVATE -O3 -march=native -ffast-math)
@@ -26,6 +27,11 @@ target_compile_options(lenia PRIVATE -O3 -march=native -ffast-math)
 add_executable(lenia_discover src/lenia_discover_cli.cpp)
 target_link_libraries(lenia_discover PRIVATE lenia_core)
 target_compile_options(lenia_discover PRIVATE -O3 -march=native -ffast-math)
+
+# Particle Lenia test
+add_executable(test_particle src/test_particle.cpp)
+target_link_libraries(test_particle PRIVATE lenia_core)
+target_compile_options(test_particle PRIVATE -O3 -march=native -ffast-math)
 
 # Analysis test
 add_executable(test_analysis src/test_analysis.cpp)
