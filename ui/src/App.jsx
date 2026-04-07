@@ -326,6 +326,8 @@ function App() {
           <div className="stat-row"><span className="stat-label">Lyapunov</span><span className="stat-value">{(frame?.lyapunov || 0).toFixed(4)}</span></div>
           <div className="stat-row"><span className="stat-label">Symmetry</span><span className="stat-value">{frame?.symmetry || 0}-fold</span></div>
           <div className="stat-row"><span className="stat-label">View</span><span className="stat-value">{view3D ? '3D Surface' : '2D'}</span></div>
+          <div className="stat-row"><span className="stat-label">Entropy</span><span className="stat-value">{frame?.entropy >= 0 ? frame.entropy.toFixed(3) : '-'}</span></div>
+          <div className="stat-row"><span className="stat-label">Components</span><span className="stat-value">{frame?.components >= 0 ? frame.components : '-'}</span></div>
           <div className="stat-row"><span className="stat-label">Status</span><span className="stat-value">{frame?.is_empty ? 'EMPTY' : frame?.is_full ? 'FULL' : 'ALIVE'}</span></div>
           <div className="stat-row"><span className="stat-label">Code</span><span className="stat-value">{frame?.code || '-'}</span></div>
         </div>

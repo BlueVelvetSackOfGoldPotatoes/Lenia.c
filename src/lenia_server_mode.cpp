@@ -10,6 +10,7 @@
  *  "width":W, "height":H}
  */
 #include "lenia_app.h"
+#include "lenia_analysis.h"
 #include <iostream>
 #include <sstream>
 #include <cstdlib>
@@ -192,6 +193,8 @@ int main(int argc, char* argv[]) {
         std::cout << "]}"
                   << ",\"name\":\"" << escape_json(app.world().names[1]) << "\""
                   << ",\"code\":\"" << escape_json(app.world().names[0]) << "\""
+                  << ",\"components\":" << (app.automaton().gen() % 10 == 0 ? lenia::analysis::count_components(app.world().cells) : -1)
+                  << ",\"entropy\":" << (app.automaton().gen() % 10 == 0 ? lenia::analysis::shannon_entropy(app.world().cells) : -1)
                   << ",\"dim\":" << dim
                   << ",\"width\":" << size
                   << ",\"height\":" << size
