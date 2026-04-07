@@ -12,6 +12,7 @@ add_library(lenia_core STATIC
     src/lenia_cppn.cpp
     src/lenia_app.cpp
     src/lenia_multichannel.cpp
+    src/lenia_discovery.cpp
 )
 target_include_directories(lenia_core PUBLIC include)
 target_compile_options(lenia_core PRIVATE -O3 -march=native -ffast-math)
@@ -19,6 +20,11 @@ target_compile_options(lenia_core PRIVATE -O3 -march=native -ffast-math)
 add_executable(lenia src/main.cpp)
 target_link_libraries(lenia PRIVATE lenia_core)
 target_compile_options(lenia PRIVATE -O3 -march=native -ffast-math)
+
+# Discovery engine CLI
+add_executable(lenia_discover src/lenia_discover_cli.cpp)
+target_link_libraries(lenia_discover PRIVATE lenia_core)
+target_compile_options(lenia_discover PRIVATE -O3 -march=native -ffast-math)
 
 # Multi-channel test
 add_executable(test_multichannel src/test_multichannel.cpp)
