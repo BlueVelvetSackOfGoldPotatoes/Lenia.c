@@ -1,0 +1,239 @@
+{
+  "results": [
+    {
+      "size": 64,
+      "steps": 100,
+      "python": {
+        "wall_time_s": 0.02596713599632494,
+        "per_step_ms": 0.2596713599632494,
+        "steps_per_s": 3851.0215379221154,
+        "peak_memory_mb": 0.5639772415161133,
+        "final_mass": 71.25188335121314
+      },
+      "cpp": {
+        "wall_time_s": 0.01,
+        "per_step_ms": 0.1,
+        "steps_per_s": 13769.0,
+        "peak_memory_mb": 21.5,
+        "final_mass": 73.5
+      },
+      "speedup": 2.596713599632494
+    },
+    {
+      "size": 64,
+      "steps": 500,
+      "python": {
+        "wall_time_s": 0.11711807400570251,
+        "per_step_ms": 0.23423614801140502,
+        "steps_per_s": 4269.195888378892,
+        "peak_memory_mb": 0.46730804443359375,
+        "final_mass": 71.23879828938935
+      },
+      "cpp": {
+        "wall_time_s": 0.02,
+        "per_step_ms": 0.04,
+        "steps_per_s": 20305.0,
+        "peak_memory_mb": 21.34765625,
+        "final_mass": 74.0
+      },
+      "speedup": 5.8559037002851255
+    },
+    {
+      "size": 64,
+      "steps": 1000,
+      "python": {
+        "wall_time_s": 0.21817810300854035,
+        "per_step_ms": 0.21817810300854035,
+        "steps_per_s": 4583.411379100936,
+        "peak_memory_mb": 0.49401092529296875,
+        "final_mass": 71.19125844171668
+      },
+      "cpp": {
+        "wall_time_s": 0.05,
+        "per_step_ms": 0.05,
+        "steps_per_s": 21048.0,
+        "peak_memory_mb": 21.375,
+        "final_mass": 73.8
+      },
+      "speedup": 4.363562060170807
+    },
+    {
+      "size": 128,
+      "steps": 100,
+      "python": {
+        "wall_time_s": 0.0453151140245609,
+        "per_step_ms": 0.453151140245609,
+        "steps_per_s": 2206.769245814978,
+        "peak_memory_mb": 1.7584152221679688,
+        "final_mass": 71.25188335121311
+      },
+      "cpp": {
+        "wall_time_s": 0.02,
+        "per_step_ms": 0.2,
+        "steps_per_s": 4884.0,
+        "peak_memory_mb": 22.85546875,
+        "final_mass": 73.5
+      },
+      "speedup": 2.265755701228045
+    },
+    {
+      "size": 128,
+      "steps": 500,
+      "python": {
+        "wall_time_s": 0.20934492402011529,
+        "per_step_ms": 0.41868984804023057,
+        "steps_per_s": 2388.402787124452,
+        "peak_memory_mb": 1.7684326171875,
+        "final_mass": 71.23879828941978
+      },
+      "cpp": {
+        "wall_time_s": 0.09,
+        "per_step_ms": 0.18,
+        "steps_per_s": 5304.0,
+        "peak_memory_mb": 23.48046875,
+        "final_mass": 74.0
+      },
+      "speedup": 2.3260547113346144
+    },
+    {
+      "size": 128,
+      "steps": 1000,
+      "python": {
+        "wall_time_s": 0.40594726998824626,
+        "per_step_ms": 0.40594726998824626,
+        "steps_per_s": 2463.3741225281647,
+        "peak_memory_mb": 1.753265380859375,
+        "final_mass": 71.1912584417369
+      },
+      "cpp": {
+        "wall_time_s": 0.18,
+        "per_step_ms": 0.18,
+        "steps_per_s": 5490.0,
+        "peak_memory_mb": 22.8984375,
+        "final_mass": 73.8
+      },
+      "speedup": 2.2552626110458127
+    },
+    {
+      "size": 256,
+      "steps": 100,
+      "python": {
+        "wall_time_s": 0.13928175999899395,
+        "per_step_ms": 1.3928175999899395,
+        "steps_per_s": 717.969100912584,
+        "peak_memory_mb": 7.00323486328125,
+        "final_mass": 71.25188335121311
+      },
+      "cpp": {
+        "wall_time_s": 0.17,
+        "per_step_ms": 1.7000000000000002,
+        "steps_per_s": 572.0,
+        "peak_memory_mb": 30.2890625,
+        "final_mass": 73.5
+      },
+      "speedup": 0.8193044705823173
+    },
+    {
+      "size": 256,
+      "steps": 500,
+      "python": {
+        "wall_time_s": 0.6636778739921283,
+        "per_step_ms": 1.3273557479842566,
+        "steps_per_s": 753.3775338816408,
+        "peak_memory_mb": 7.003265380859375,
+        "final_mass": 71.2387982894493
+      },
+      "cpp": {
+        "wall_time_s": 0.8,
+        "per_step_ms": 1.6,
+        "steps_per_s": 624.0,
+        "peak_memory_mb": 30.46875,
+        "final_mass": 74.0
+      },
+      "speedup": 0.8295973424901604
+    },
+    {
+      "size": 256,
+      "steps": 1000,
+      "python": {
+        "wall_time_s": 1.234841356985271,
+        "per_step_ms": 1.234841356985271,
+        "steps_per_s": 809.8206254132837,
+        "peak_memory_mb": 7.003265380859375,
+        "final_mass": 71.19125844175663
+      },
+      "cpp": {
+        "wall_time_s": 1.57,
+        "per_step_ms": 1.57,
+        "steps_per_s": 639.0,
+        "peak_memory_mb": 30.2265625,
+        "final_mass": 73.8
+      },
+      "speedup": 0.7865231573154592
+    },
+    {
+      "size": 512,
+      "steps": 100,
+      "python": {
+        "wall_time_s": 0.8124995059915818,
+        "per_step_ms": 8.124995059915818,
+        "steps_per_s": 123.07699790901299,
+        "peak_memory_mb": 28.003402709960938,
+        "final_mass": 71.25188335121312
+      },
+      "cpp": {
+        "wall_time_s": 0.97,
+        "per_step_ms": 9.700000000000001,
+        "steps_per_s": 103.0,
+        "peak_memory_mb": 63.26171875,
+        "final_mass": 73.5
+      },
+      "speedup": 0.8376283566923525
+    },
+    {
+      "size": 512,
+      "steps": 500,
+      "python": {
+        "wall_time_s": 4.17509401999996,
+        "per_step_ms": 8.35018803999992,
+        "steps_per_s": 119.75778212534834,
+        "peak_memory_mb": 28.003433227539062,
+        "final_mass": 71.23879828942361
+      },
+      "cpp": {
+        "wall_time_s": 3.94,
+        "per_step_ms": 7.88,
+        "steps_per_s": 127.0,
+        "peak_memory_mb": 62.9140625,
+        "final_mass": 74.0
+      },
+      "speedup": 1.0596685329949138
+    },
+    {
+      "size": 512,
+      "steps": 1000,
+      "python": {
+        "wall_time_s": 9.027930366981309,
+        "per_step_ms": 9.027930366981309,
+        "steps_per_s": 110.76735855843474,
+        "peak_memory_mb": 28.003433227539062,
+        "final_mass": 71.19125844173949
+      },
+      "cpp": {
+        "wall_time_s": 10.3,
+        "per_step_ms": 10.3,
+        "steps_per_s": 97.0,
+        "peak_memory_mb": 63.2578125,
+        "final_mass": 73.8
+      },
+      "speedup": 0.8764980938816804
+    }
+  ],
+  "creature": "O2u",
+  "params": {
+    "R": 13,
+    "T": 10,
+    "m": 0.15,
+    "s": 0.015
+  }
+}
