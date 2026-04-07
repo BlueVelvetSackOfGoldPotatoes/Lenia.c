@@ -11,6 +11,7 @@ add_library(lenia_core STATIC
     src/lenia_recorder.cpp
     src/lenia_cppn.cpp
     src/lenia_app.cpp
+    src/lenia_multichannel.cpp
 )
 target_include_directories(lenia_core PUBLIC include)
 target_compile_options(lenia_core PRIVATE -O3 -march=native -ffast-math)
@@ -18,6 +19,11 @@ target_compile_options(lenia_core PRIVATE -O3 -march=native -ffast-math)
 add_executable(lenia src/main.cpp)
 target_link_libraries(lenia PRIVATE lenia_core)
 target_compile_options(lenia PRIVATE -O3 -march=native -ffast-math)
+
+# Multi-channel test
+add_executable(test_multichannel src/test_multichannel.cpp)
+target_link_libraries(test_multichannel PRIVATE lenia_core)
+target_compile_options(test_multichannel PRIVATE -O3 -march=native -ffast-math)
 
 # Server mode (JSON stdout for web UI)
 add_executable(lenia_server src/lenia_server_mode.cpp)
