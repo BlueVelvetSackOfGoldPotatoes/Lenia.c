@@ -43,25 +43,46 @@ function coolmap(v){return [v<128?0:Math.floor((v-128)*2),Math.min(255,v),Math.m
 
 function decodeB64(b64,w,h){if(!b64)return null;try{const r=atob(b64);if(r.length<w*h)return null;const a=new Uint8Array(w*h);for(let i=0;i<w*h;i++)a[i]=r.charCodeAt(i);return a;}catch(e){return null;}}
 
-function CanvasPanel({data,w,h,cfn,zoom,label}){
-  const ref=useRef(null);
+function CanvasPanel({data,w,h,cfn,label}){
+  const canvasRef=useRef(null);
+  const wrapRef=useRef(null);
+  const viewRef=useRef({zoom:1,px:0,py:0,drag:false,lx:0,ly:0});
+
   useEffect(()=>{
-    if(!ref.current||!data)return;
-    const c=ref.current;c.width=w;c.height=h;
+    if(!canvasRef.current||!data)return;
+    const c=canvasRef.current;c.width=w;c.height=h;
     const ctx=c.getContext('2d');const img=ctx.createImageData(w,h);
     for(let i=0;i<w*h;i++){const[r,g,b]=(cfn||colorize)(data[i]);img.data[i*4]=r;img.data[i*4+1]=g;img.data[i*4+2]=b;img.data[i*4+3]=255;}
     ctx.putImageData(img,0,0);
   },[data,w,h,cfn]);
-  const z = zoom || 1;
-  const pw = Math.round(w * z);
-  const ph = Math.round(h * z);
-  return <div style={{position:'relative',flex:1,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',minWidth:0,minHeight:0}}>
-    {label&&<div style={{position:'absolute',top:2,left:4,fontSize:9,color:'#8b949e',zIndex:1,background:'rgba(0,0,0,0.6)',padding:'0 4px',borderRadius:2}}>{label}</div>}
-    <canvas ref={ref} style={{width:pw,height:ph,imageRendering:'pixelated',maxWidth:'100%',maxHeight:'100%'}}/>
+
+  // Attach native event listeners for zoom/pan (avoids React passive wheel issue)
+  useEffect(()=>{
+    const el=wrapRef.current; if(!el)return;
+    const v=viewRef.current;
+    const apply=()=>{if(canvasRef.current) canvasRef.current.style.transform=`translate(${v.px}px,${v.py}px) scale(${v.zoom})`;};
+    const onWheel=(e)=>{e.preventDefault();e.stopPropagation();v.zoom=Math.max(0.5,Math.min(12,v.zoom*(e.deltaY<0?1.15:0.87)));apply();};
+    const onDown=(e)=>{v.drag=true;v.lx=e.clientX;v.ly=e.clientY;};
+    const onMove=(e)=>{if(!v.drag)return;v.px+=e.clientX-v.lx;v.py+=e.clientY-v.ly;v.lx=e.clientX;v.ly=e.clientY;apply();};
+    const onUp=()=>{v.drag=false;};
+    const onDbl=()=>{v.zoom=1;v.px=0;v.py=0;apply();};
+    el.addEventListener('wheel',onWheel,{passive:false});
+    el.addEventListener('mousedown',onDown);
+    el.addEventListener('mousemove',onMove);
+    el.addEventListener('mouseup',onUp);
+    el.addEventListener('mouseleave',onUp);
+    el.addEventListener('dblclick',onDbl);
+    return()=>{el.removeEventListener('wheel',onWheel);el.removeEventListener('mousedown',onDown);el.removeEventListener('mousemove',onMove);el.removeEventListener('mouseup',onUp);el.removeEventListener('mouseleave',onUp);el.removeEventListener('dblclick',onDbl);};
+  },[]);
+
+  return <div ref={wrapRef} style={{position:'relative',flex:1,overflow:'hidden',minWidth:0,minHeight:0,cursor:'grab',background:'#000'}}>
+    {label&&<div style={{position:'absolute',top:2,left:4,fontSize:9,color:'#8b949e',zIndex:1,background:'rgba(0,0,0,0.6)',padding:'0 4px',borderRadius:2,pointerEvents:'none'}}>{label}</div>}
+    <canvas ref={canvasRef} style={{imageRendering:'pixelated',width:'100%',height:'100%',objectFit:'contain',transformOrigin:'center center'}}/>
   </div>;
 }
 
-function Surface3D({data,w,h,zoom}){
+function Surface3D({data,w,h}){
+  const [zoom,setZoom]=useState(1);
   const ref=useRef(null);const st=useRef({rx:-30,ry:30,d:false,lx:0,ly:0});
   useEffect(()=>{const c=ref.current;if(!c)return;const s=st.current;
     const dn=e=>{e.stopPropagation();s.d=true;s.lx=e.clientX;s.ly=e.clientY;};
@@ -92,7 +113,7 @@ function Surface3D({data,w,h,zoom}){
     quads.sort((a,b)=>a.z-b.z);
     for(const q of quads){const[r,g,b]=colorize(Math.floor(q.v*255));ctx.fillStyle=`rgb(${r},${g},${b})`;ctx.beginPath();ctx.moveTo(proj[q.i00*3],proj[q.i00*3+1]);ctx.lineTo(proj[q.i01*3],proj[q.i01*3+1]);ctx.lineTo(proj[q.i11*3],proj[q.i11*3+1]);ctx.lineTo(proj[q.i10*3],proj[q.i10*3+1]);ctx.closePath();ctx.fill();}
   },[data,w,h,zoom]);
-  return <canvas ref={ref} style={{width:'100%',height:'100%',cursor:'grab'}}/>;
+  return <canvas ref={ref} style={{width:'100%',height:'100%',cursor:'grab'}} onWheel={e=>{e.preventDefault();setZoom(z=>Math.max(0.3,Math.min(5,z*(e.deltaY<0?1.15:0.87))));}}/>;
 }
 
 function PS({label,value,min,max,step,onChange,title}){
@@ -110,7 +131,7 @@ export default function App() {
   const [view,setView]=useState('quad');
   const [libTab,setLibTab]=useState('animals'); // 'animals' or 'saved'
   const [saveName,setSaveName]=useState('');
-  const [zoom,setZoom]=useState(1);
+  const [zoom,setZoom]=useState(1); // kept for 3D surface only
   const [wasd,setWasd]=useState(false);
 
   useEffect(()=>{
@@ -130,7 +151,7 @@ export default function App() {
   const fa=animals.filter(a=>a.name.toLowerCase().includes(flt.toLowerCase())||a.code.toLowerCase().includes(flt.toLowerCase()));
 
   return (
-    <div className="app" onWheel={e=>{e.preventDefault();setZoom(z=>Math.max(0.5,Math.min(8,z*(e.deltaY<0?1.1:0.9))));}}>
+    <div className="app">
       {/* HEADER */}
       <div className="header">
         <h1>Lenia</h1>
@@ -214,13 +235,13 @@ export default function App() {
           <>
             {/* Main world view — takes 65% */}
             <div style={{flex:7,display:'flex',position:'relative',minHeight:0}}>
-              <CanvasPanel data={cells} w={w} h={h} label="World f(x)" zoom={zoom}/>
+              <CanvasPanel data={cells} w={w} h={h} label="World f(x)"/>
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             {/* Bottom strip — 35%: growth + potential + phase */}
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)" zoom={zoom}/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f" zoom={zoom}/>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -239,12 +260,12 @@ export default function App() {
         ) : view==='3d' && cells ? (
           <>
             <div style={{flex:7,minHeight:0,position:'relative'}}>
-              <Surface3D data={cells} w={w} h={h} zoom={zoom}/>
+              <Surface3D data={cells} w={w} h={h}/>
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)" zoom={zoom}/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f" zoom={zoom}/>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -263,12 +284,12 @@ export default function App() {
         ) : cells ? (
           <>
             <div style={{flex:7,position:'relative',minHeight:0}}>
-              <CanvasPanel data={cells} w={w} h={h} zoom={zoom}/>
+              <CanvasPanel data={cells} w={w} h={h}/>
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)" zoom={zoom}/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f" zoom={zoom}/>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
