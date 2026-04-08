@@ -8,5 +8,19 @@
 <body>
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
+  <script>
+    // Global WASD handler — runs outside React, guaranteed to work
+    window.__leniaWASD = false;
+    window.addEventListener('keydown', function(e) {
+      if (!window.__leniaWASD) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+      var cmds = {w:'stim 0 -1', s:'stim 0 1', a:'stim -1 0', d:'stim 1 0'};
+      var cmd = cmds[e.key.toLowerCase()];
+      if (cmd) {
+        e.preventDefault();
+        fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+      }
+    });
+  </script>
 </body>
 </html>

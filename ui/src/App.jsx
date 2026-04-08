@@ -108,24 +108,10 @@ export default function App() {
   const [wasd,setWasd]=useState(false);
 
   useEffect(()=>{fetch('/api/animals').then(r=>r.json()).then(setAnimals).catch(()=>{});},[]);
-  // WASD: always listen, but only act when wasd mode is on AND not typing in an input
+  // WASD: toggle the global flag that the raw handler in index.html checks
   useEffect(()=>{
-    const down = (e) => {
-      // Skip if typing in an input/select
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-      if (!wasd) return;
-      const k = e.key.toLowerCase();
-      const cmds = {w:'stim 0 -1', s:'stim 0 1', a:'stim -1 0', d:'stim 1 0'};
-      if (cmds[k]) {
-        e.preventDefault();
-        e.stopPropagation();
-        send(cmds[k]);
-        fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:cmds[k]})}).catch(()=>{});
-      }
-    };
-    window.addEventListener('keydown', down);
-    return () => window.removeEventListener('keydown', down);
-  },[wasd, send]);
+    window.__leniaWASD = wasd;
+  },[wasd]);
 
   const p=frame?.params||{R:13,T:10,m:0.15,s:0.015,kn:1,gn:1,b:[1]};
   const w=frame?.width||128,h=frame?.height||128;
