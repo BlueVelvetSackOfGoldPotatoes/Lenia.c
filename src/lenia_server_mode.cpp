@@ -136,6 +136,10 @@ int main(int argc, char* argv[]) {
                 else if (line == "search_up") { app.toggle_search(+1); }
                 else if (line == "search_down") { app.toggle_search(-1); }
                 else if (line == "search_stop") { app.stop_search(); }
+                else if (line == "shift_up") { app.tx().shift = {-2, 0}; app.transform_world(); }
+                else if (line == "shift_down") { app.tx().shift = {2, 0}; app.transform_world(); }
+                else if (line == "shift_left") { app.tx().shift = {0, -2}; app.transform_world(); }
+                else if (line == "shift_right") { app.tx().shift = {0, 2}; app.transform_world(); }
             }
         } else if (nread == 0) {
             // EOF on stdin — parent closed pipe. Exit gracefully.
@@ -150,10 +154,13 @@ int main(int argc, char* argv[]) {
             app.step();
         }
 
-        // Encode cells as uint8 for compact transmission
-        // For 3D: take a Z-middle slice; for 2D: take the full array
+        // Encode cells, potential, field as uint8 for compact transmission
         const auto& cells = app.world().cells.data();
+        const auto& potential = app.automaton().potential();
+        const auto& field_data = app.automaton().field();
         int view_size = size * size;
+        std::vector<uint8_t> pot_u8(view_size, 0);
+        std::vector<uint8_t> fld_u8(view_size, 0);
         if (dim == 3) {
             int z_mid = size / 2;
             int slice_offset = z_mid * size * size;
@@ -166,6 +173,25 @@ int main(int argc, char* argv[]) {
             }
         }
         std::string cells_b64 = base64_encode(cells_u8);
+
+        // Encode potential (normalize to 0-255 from its actual range)
+        if (!potential.empty()) {
+            double pmin = *std::min_element(potential.begin(), potential.end());
+            double pmax = *std::max_element(potential.begin(), potential.end());
+            double prange = std::max(pmax - pmin, 1e-10);
+            for (int i = 0; i < view_size && i < static_cast<int>(potential.size()); ++i) {
+                pot_u8[i] = static_cast<uint8_t>(std::clamp((potential[i] - pmin) / prange * 255.0, 0.0, 255.0));
+            }
+        }
+        std::string pot_b64 = base64_encode(pot_u8);
+
+        // Encode field (normalize -1..+1 to 0..255)
+        if (!field_data.empty()) {
+            for (int i = 0; i < view_size && i < static_cast<int>(field_data.size()); ++i) {
+                fld_u8[i] = static_cast<uint8_t>(std::clamp((field_data[i] + 1.0) * 0.5 * 255.0, 0.0, 255.0));
+            }
+        }
+        std::string fld_b64 = base64_encode(fld_u8);
 
         // Output frame as JSON
         std::cout << "{\"gen\":" << app.automaton().gen()
@@ -199,6 +225,8 @@ int main(int argc, char* argv[]) {
                   << ",\"width\":" << size
                   << ",\"height\":" << size
                   << ",\"cells_b64\":\"" << cells_b64 << "\""
+                  << ",\"potential_b64\":\"" << pot_b64 << "\""
+                  << ",\"field_b64\":\"" << fld_b64 << "\""
                   << "}" << std::endl;
 
         // Rate limit
