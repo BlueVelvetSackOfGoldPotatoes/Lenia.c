@@ -196,11 +196,12 @@ function SimCanvas3D({ frame, zoom }) {
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%', cursor: 'grab' }} />;
 }
 
-function ParamSlider({ label, value, min, max, step, onChange }) {
+function ParamSlider({ label, value, min, max, step, onChange, title }) {
   return (
-    <div className="param-row">
+    <div className="param-row" title={title}>
       <span className="param-label">{label}</span>
       <input type="range" id={`param-${label}`} name={`param-${label}`} min={min} max={max} step={step} value={value}
+             title={title}
              onChange={e => onChange(parseFloat(e.target.value))} />
       <span className="param-value">{typeof value === 'number' ? value.toFixed(step < 0.01 ? 4 : 3) : value}</span>
     </div>
@@ -231,15 +232,18 @@ function App() {
         <h1>Lenia</h1>
         <span className="tag">{connected ? 'LIVE' : 'OFFLINE'}</span>
         <div className="btn-row">
-          <button className={`btn ${frame?.running ? 'active' : ''}`} onClick={() => send(frame?.running ? 'pause' : 'run')}>
+          <button className={`btn ${frame?.running ? 'active' : ''}`}
+                  title={frame?.running ? 'Pause the simulation' : 'Resume the simulation'}
+                  onClick={() => send(frame?.running ? 'pause' : 'run')}>
             {frame?.running ? '⏸ Pause' : '▶ Run'}
           </button>
-          <button className="btn" onClick={() => send('step')}>Step</button>
-          <button className="btn" onClick={() => send('random')}>Random</button>
-          <button className="btn" onClick={() => send('random_params')}>New Params</button>
-          <button className="btn" onClick={() => send('clear')}>Clear</button>
-          <button className="btn" onClick={() => send('cppn')}>CPPN</button>
+          <button className="btn" title="Advance one simulation step (while paused)" onClick={() => send('step')}>Step</button>
+          <button className="btn" title="Randomize the world with current parameters — fills center with random cell values" onClick={() => send('random')}>Random</button>
+          <button className="btn" title="Randomize both the world AND parameters (R, T, m, s, b) — generates a completely new organism candidate" onClick={() => send('random_params')}>New Params</button>
+          <button className="btn" title="Clear the world — set all cells to zero" onClick={() => send('clear')}>Clear</button>
+          <button className="btn" title="Generate a world using a CPPN (Compositional Pattern-Producing Network) — creates smooth organic initial patterns via a small neural network" onClick={() => send('cppn')}>CPPN</button>
           <button className={`btn ${view3D ? 'active' : ''}`}
+                  title={view3D ? 'Switch back to flat 2D pixel view' : 'View the simulation as a 3D height-map surface (cell value = height). Drag to rotate, scroll to zoom.'}
                   onClick={() => setView3D(!view3D)}>
             {view3D ? '2D View' : '3D Surface'}
           </button>
@@ -253,23 +257,27 @@ function App() {
         <div className="panel">
           <div className="panel-title">Parameters</div>
           <ParamSlider label="R" value={params.R} min={5} max={50} step={1}
+                       title="Kernel Radius — how far each cell can sense its neighbors. Larger R = wider interaction range. Optimal is often ~13 for Orbium."
                        onChange={v => send(`set_R ${Math.round(v)}`)} />
           <ParamSlider label="T" value={params.T} min={1} max={50} step={1}
+                       title="Time Resolution — number of sub-steps per generation. Higher T = smoother/slower dynamics (dt = 1/T)."
                        onChange={v => send(`set_T ${Math.round(v)}`)} />
           <ParamSlider label="m" value={params.m} min={0.01} max={0.5} step={0.001}
+                       title="Growth Mean — the neighborhood density at which cells grow fastest. The 'sweet spot' for life. Too low = everything grows, too high = nothing grows."
                        onChange={v => send(`set_m ${v}`)} />
           <ParamSlider label="s" value={params.s} min={0.001} max={0.1} step={0.0001}
+                       title="Growth Sigma — how sharply the growth function peaks around m. Smaller s = narrower viability window = more selective/fragile organisms."
                        onChange={v => send(`set_s ${v}`)} />
-          <div className="param-row">
+          <div className="param-row" title="Kernel Shape — the spatial interaction pattern. Exponential (bump) is the classic Lenia kernel. Polynomial is smoother. Step creates sharp-edged rings.">
             <span className="param-label">kn</span>
-            <select value={params.kn} onChange={e => send(`set_kn ${e.target.value}`)}
+            <select id="param-kn" name="param-kn" value={params.kn} onChange={e => send(`set_kn ${e.target.value}`)}
                     style={{ flex: 1, margin: '0 8px', background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', padding: '2px', borderRadius: 3 }}>
               {KERNEL_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
             </select>
           </div>
-          <div className="param-row">
+          <div className="param-row" title="Growth Function — how neighborhood density maps to cell growth/decay. Gaussian is classic Lenia. Polynomial has flatter tails. Step creates binary alive/dead behavior.">
             <span className="param-label">gn</span>
-            <select value={params.gn} onChange={e => send(`set_gn ${e.target.value}`)}
+            <select id="param-gn" name="param-gn" value={params.gn} onChange={e => send(`set_gn ${e.target.value}`)}
                     style={{ flex: 1, margin: '0 8px', background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', padding: '2px', borderRadius: 3 }}>
               {GROWTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
             </select>
@@ -283,9 +291,9 @@ function App() {
         <div className="panel">
           <div className="panel-title">Search</div>
           <div className="btn-row">
-            <button className="btn" onClick={() => send('search_up')}>Search ↑</button>
-            <button className="btn" onClick={() => send('search_down')}>Search ↓</button>
-            <button className="btn" onClick={() => send('search_stop')}>Stop</button>
+            <button className="btn" title="Search UP: mutate parameters toward more complex organisms. If the current organism dies or fills the world, tries new random parameters. If it survives, nudges m and s slightly to explore nearby viable parameter space." onClick={() => send('search_up')}>Search ↑</button>
+            <button className="btn" title="Search DOWN: mutate parameters toward simpler organisms. Same stability check as Search ↑ but nudges parameters in the opposite direction." onClick={() => send('search_down')}>Search ↓</button>
+            <button className="btn" title="Stop the current parameter search" onClick={() => send('search_stop')}>Stop</button>
           </div>
         </div>
 
@@ -317,19 +325,19 @@ function App() {
       <div className="sidebar-right">
         <div className="panel">
           <div className="panel-title">Statistics</div>
-          <div className="stat-row"><span className="stat-label">Generation</span><span className="stat-value">{frame?.gen || 0}</span></div>
-          <div className="stat-row"><span className="stat-label">Time</span><span className="stat-value">{(frame?.time || 0).toFixed(2)}</span></div>
-          <div className="stat-row"><span className="stat-label">Mass</span><span className="stat-value">{(frame?.mass || 0).toFixed(2)}</span></div>
-          <div className="stat-row"><span className="stat-label">Growth</span><span className="stat-value">{(frame?.growth || 0).toFixed(2)}</span></div>
-          <div className="stat-row"><span className="stat-label">Speed</span><span className="stat-value">{(frame?.speed || 0).toFixed(4)}</span></div>
-          <div className="stat-row"><span className="stat-label">Gyradius</span><span className="stat-value">{(frame?.gyradius || 0).toFixed(2)}</span></div>
-          <div className="stat-row"><span className="stat-label">Lyapunov</span><span className="stat-value">{(frame?.lyapunov || 0).toFixed(4)}</span></div>
-          <div className="stat-row"><span className="stat-label">Symmetry</span><span className="stat-value">{frame?.symmetry || 0}-fold</span></div>
+          <div className="stat-row" title="Number of simulation steps completed"><span className="stat-label">Generation</span><span className="stat-value">{frame?.gen || 0}</span></div>
+          <div className="stat-row" title="Simulation time = generation x dt (where dt = 1/T)"><span className="stat-label">Time</span><span className="stat-value">{(frame?.time || 0).toFixed(2)}</span></div>
+          <div className="stat-row" title="Total cell mass: sum of all cell values. Stable organisms maintain roughly constant mass."><span className="stat-label">Mass</span><span className="stat-value">{(frame?.mass || 0).toFixed(2)}</span></div>
+          <div className="stat-row" title="Growth rate: sum of positive growth field values. High growth = organism is actively building."><span className="stat-label">Growth</span><span className="stat-value">{(frame?.growth || 0).toFixed(2)}</span></div>
+          <div className="stat-row" title="Movement speed: how fast the organism center of mass moves per step. Gliders have high speed."><span className="stat-label">Speed</span><span className="stat-value">{(frame?.speed || 0).toFixed(4)}</span></div>
+          <div className="stat-row" title="Gyration radius: how spread out the organism is. Larger = more extended shape."><span className="stat-label">Gyradius</span><span className="stat-value">{(frame?.gyradius || 0).toFixed(2)}</span></div>
+          <div className="stat-row" title="Lyapunov exponent: sensitivity to perturbation. Positive = chaotic, ~0 = stable, negative = damped."><span className="stat-label">Lyapunov</span><span className="stat-value">{(frame?.lyapunov || 0).toFixed(4)}</span></div>
+          <div className="stat-row" title="Rotational symmetry order detected via polar FFT (e.g. 6 = hexagonal, 2 = bilateral)."><span className="stat-label">Symmetry</span><span className="stat-value">{frame?.symmetry || 0}-fold</span></div>
           <div className="stat-row"><span className="stat-label">View</span><span className="stat-value">{view3D ? '3D Surface' : '2D'}</span></div>
-          <div className="stat-row"><span className="stat-label">Entropy</span><span className="stat-value">{frame?.entropy >= 0 ? frame.entropy.toFixed(3) : '-'}</span></div>
-          <div className="stat-row"><span className="stat-label">Components</span><span className="stat-value">{frame?.components >= 0 ? frame.components : '-'}</span></div>
-          <div className="stat-row"><span className="stat-label">Status</span><span className="stat-value">{frame?.is_empty ? 'EMPTY' : frame?.is_full ? 'FULL' : 'ALIVE'}</span></div>
-          <div className="stat-row"><span className="stat-label">Code</span><span className="stat-value">{frame?.code || '-'}</span></div>
+          <div className="stat-row" title="Shannon entropy of cell values. Low = uniform, high = complex/diverse patterns."><span className="stat-label">Entropy</span><span className="stat-value">{frame?.entropy >= 0 ? frame.entropy.toFixed(3) : '-'}</span></div>
+          <div className="stat-row" title="Connected components: number of separate bodies. 1 = single organism, 2+ = multiple or fragmented."><span className="stat-label">Components</span><span className="stat-value">{frame?.components >= 0 ? frame.components : '-'}</span></div>
+          <div className="stat-row" title="EMPTY = organism died. FULL = hit boundary. ALIVE = stable and contained."><span className="stat-label">Status</span><span className="stat-value">{frame?.is_empty ? 'EMPTY' : frame?.is_full ? 'FULL' : 'ALIVE'}</span></div>
+          <div className="stat-row" title="Animal code from the Lenia creature library"><span className="stat-label">Code</span><span className="stat-value">{frame?.code || '-'}</span></div>
         </div>
 
         <div className="panel">
