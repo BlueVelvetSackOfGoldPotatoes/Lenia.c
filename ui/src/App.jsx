@@ -52,9 +52,12 @@ function CanvasPanel({data,w,h,cfn,zoom,label}){
     for(let i=0;i<w*h;i++){const[r,g,b]=(cfn||colorize)(data[i]);img.data[i*4]=r;img.data[i*4+1]=g;img.data[i*4+2]=b;img.data[i*4+3]=255;}
     ctx.putImageData(img,0,0);
   },[data,w,h,cfn]);
-  return <div style={{position:'relative',flex:1,display:'flex',flexDirection:'column',minWidth:0,minHeight:0}}>
+  const z = zoom || 1;
+  const pw = Math.round(w * z);
+  const ph = Math.round(h * z);
+  return <div style={{position:'relative',flex:1,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',minWidth:0,minHeight:0}}>
     {label&&<div style={{position:'absolute',top:2,left:4,fontSize:9,color:'#8b949e',zIndex:1,background:'rgba(0,0,0,0.6)',padding:'0 4px',borderRadius:2}}>{label}</div>}
-    <canvas ref={ref} style={{width:'100%',height:'100%',imageRendering:'pixelated',objectFit:'contain'}}/>
+    <canvas ref={ref} style={{width:pw,height:ph,imageRendering:'pixelated',maxWidth:'100%',maxHeight:'100%'}}/>
   </div>;
 }
 
