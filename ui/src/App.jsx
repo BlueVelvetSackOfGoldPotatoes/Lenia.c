@@ -110,26 +110,20 @@ export default function App() {
   useEffect(()=>{fetch('/api/animals').then(r=>r.json()).then(setAnimals).catch(()=>{});},[]);
   useEffect(()=>{
     if(!wasd)return;
-    const held = {};
+    const sendCmd = (cmd) => {
+      // Use both WebSocket and HTTP to ensure delivery
+      send(cmd);
+      fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})}).catch(()=>{});
+    };
     const down = (e) => {
       const k = e.key.toLowerCase();
-      if (!'wasd'.includes(k)) return;
-      e.preventDefault();
-      if (held[k]) return; // already held
-      held[k] = true;
-    };
-    const up = (e) => {
-      delete held[e.key.toLowerCase()];
+      if (k==='w') { e.preventDefault(); sendCmd('stim 0 -1'); }
+      else if (k==='s') { e.preventDefault(); sendCmd('stim 0 1'); }
+      else if (k==='a') { e.preventDefault(); sendCmd('stim -1 0'); }
+      else if (k==='d') { e.preventDefault(); sendCmd('stim 1 0'); }
     };
     document.addEventListener('keydown', down, true);
-    document.addEventListener('keyup', up, true);
-    const interval = setInterval(() => {
-      if (held['w']) send('stim 0 -1');
-      if (held['s']) send('stim 0 1');
-      if (held['a']) send('stim -1 0');
-      if (held['d']) send('stim 1 0');
-    }, 60);
-    return () => { document.removeEventListener('keydown', down, true); document.removeEventListener('keyup', up, true); clearInterval(interval); };
+    return () => { document.removeEventListener('keydown', down, true); };
   },[wasd,send]);
 
   const p=frame?.params||{R:13,T:10,m:0.15,s:0.015,kn:1,gn:1,b:[1]};
