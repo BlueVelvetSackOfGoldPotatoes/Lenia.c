@@ -233,10 +233,29 @@ export default function App() {
             </div>
           </>
         ) : cells ? (
-          <div style={{flex:1,position:'relative'}}>
-            <CanvasPanel data={cells} w={w} h={h} zoom={zoom}/>
-            <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
-          </div>
+          <>
+            <div style={{flex:7,position:'relative',minHeight:0}}>
+              <CanvasPanel data={cells} w={w} h={h} zoom={zoom}/>
+              <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
+            </div>
+            <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
+                <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
+                <div style={{flex:1,minHeight:0}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ScatterChart margin={{top:2,right:4,bottom:14,left:14}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#30363d"/>
+                      <XAxis dataKey="mass" stroke="#8b949e" tick={{fontSize:8}}/>
+                      <YAxis dataKey="growth" stroke="#8b949e" tick={{fontSize:8}}/>
+                      <Scatter data={history.slice(-150)} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </>
         ) : <div style={{margin:'auto',color:'var(--text-dim)'}}>Connecting...</div>}
       </div>
 
