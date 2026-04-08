@@ -136,10 +136,47 @@ int main(int argc, char* argv[]) {
                 else if (line == "search_up") { app.toggle_search(+1); }
                 else if (line == "search_down") { app.toggle_search(-1); }
                 else if (line == "search_stop") { app.stop_search(); }
-                else if (line == "shift_up") { app.tx().shift = {-2, 0}; app.transform_world(); }
-                else if (line == "shift_down") { app.tx().shift = {2, 0}; app.transform_world(); }
-                else if (line == "shift_left") { app.tx().shift = {0, -2}; app.transform_world(); }
-                else if (line == "shift_right") { app.tx().shift = {0, 2}; app.transform_world(); }
+                else if (line.substr(0, 5) == "stim ") {
+                    // Stimulus: deposit a small blob near the organism in a direction
+                    // Format: "stim dx dy" where dx,dy in {-1,0,1}
+                    // Places material ahead of center of mass to attract the organism
+                    std::istringstream ss(line.substr(5));
+                    int dx = 0, dy = 0;
+                    ss >> dx >> dy;
+                    if (app.world().cells.ndim() == 2) {
+                        int rows = app.world().cells.shape(0);
+                        int cols = app.world().cells.shape(1);
+                        // Find center of mass
+                        double cx = 0, cy = 0, total = 0;
+                        const auto& cells = app.world().cells.data();
+                        for (int r = 0; r < rows; ++r) {
+                            for (int c = 0; c < cols; ++c) {
+                                double v = cells[r * cols + c];
+                                cx += v * c; cy += v * r; total += v;
+                            }
+                        }
+                        if (total > 0.1) {
+                            cx /= total; cy /= total;
+                            int R = app.world().params.R;
+                            // Place stimulus blob at R*1.5 distance from center in the given direction
+                            double stim_r = R * 1.5;
+                            int sr = static_cast<int>(cy + dy * stim_r);
+                            int sc = static_cast<int>(cx + dx * stim_r);
+                            // Deposit a gaussian blob of material
+                            double strength = 0.3;
+                            double sigma = R * 0.4;
+                            for (int r = -static_cast<int>(sigma*2); r <= static_cast<int>(sigma*2); ++r) {
+                                for (int c = -static_cast<int>(sigma*2); c <= static_cast<int>(sigma*2); ++c) {
+                                    int pr = ((sr + r) % rows + rows) % rows;
+                                    int pc = ((sc + c) % cols + cols) % cols;
+                                    double d2 = r*r + c*c;
+                                    double deposit = strength * std::exp(-d2 / (2 * sigma * sigma));
+                                    app.world().cells.at2(pr, pc) = std::min(1.0, app.world().cells.at2(pr, pc) + deposit);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         } else if (nread == 0) {
             // EOF on stdin — parent closed pipe. Exit gracefully.

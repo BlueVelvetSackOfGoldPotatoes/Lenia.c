@@ -110,7 +110,12 @@ export default function App() {
   useEffect(()=>{fetch('/api/animals').then(r=>r.json()).then(setAnimals).catch(()=>{});},[]);
   useEffect(()=>{
     if(!wasd)return;
-    const h=e=>{const k=e.key.toLowerCase();if(k==='w')send('shift_up');else if(k==='s')send('shift_down');else if(k==='a')send('shift_left');else if(k==='d')send('shift_right');};
+    const h=e=>{const k=e.key.toLowerCase();
+      if(k==='w')send('stim 0 -1');       // stimulus above center
+      else if(k==='s')send('stim 0 1');   // stimulus below center
+      else if(k==='a')send('stim -1 0');  // stimulus left of center
+      else if(k==='d')send('stim 1 0');   // stimulus right of center
+    };
     window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h);
   },[wasd,send]);
 
@@ -137,7 +142,7 @@ export default function App() {
           <span style={{width:1,background:'var(--border)',height:20}}/>
           {['quad','2d','3d'].map(m=><button key={m} className={`btn ${view===m?'active':''}`} onClick={()=>setView(m)}>{m.toUpperCase()}</button>)}
           <span style={{width:1,background:'var(--border)',height:20}}/>
-          <button className={`btn ${wasd?'active':''}`} title="WASD: move organism with keyboard" onClick={()=>setWasd(!wasd)}>WASD{wasd?' ●':''}</button>
+          <button className={`btn ${wasd?'active':''}`} title="WASD Steering: deposits a chemical stimulus near the organism to attract it in that direction (like chemotaxis). W=up A=left S=down D=right" onClick={()=>setWasd(!wasd)}>WASD{wasd?' ●':''}</button>
         </div>
         <span style={{marginLeft:'auto',fontSize:10,color:'var(--text-dim)',fontFamily:'monospace'}}>
           gen {frame?.gen||0} | m={( frame?.mass||0).toFixed(1)} | {frame?.name||''}
@@ -204,7 +209,29 @@ export default function App() {
             </div>
           </>
         ) : view==='3d' && cells ? (
-          <Surface3D data={cells} w={w} h={h} zoom={zoom}/>
+          <>
+            <div style={{flex:7,minHeight:0,position:'relative'}}>
+              <Surface3D data={cells} w={w} h={h} zoom={zoom}/>
+              <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
+            </div>
+            <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
+                <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
+                <div style={{flex:1,minHeight:0}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ScatterChart margin={{top:2,right:4,bottom:14,left:14}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#30363d"/>
+                      <XAxis dataKey="mass" stroke="#8b949e" tick={{fontSize:8}}/>
+                      <YAxis dataKey="growth" stroke="#8b949e" tick={{fontSize:8}}/>
+                      <Scatter data={history.slice(-150)} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </>
         ) : cells ? (
           <div style={{flex:1,position:'relative'}}>
             <CanvasPanel data={cells} w={w} h={h} zoom={zoom}/>
