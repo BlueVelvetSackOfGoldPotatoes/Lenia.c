@@ -104,13 +104,19 @@ function PS({label,value,min,max,step,onChange,title}){
 export default function App() {
   const {frame,connected,history,send}=useLeniaSocket();
   const [animals,setAnimals]=useState([]);
+  const [saved,setSaved]=useState([]);
   const [sel,setSel]=useState('');
   const [flt,setFlt]=useState('');
   const [view,setView]=useState('quad');
+  const [libTab,setLibTab]=useState('animals'); // 'animals' or 'saved'
+  const [saveName,setSaveName]=useState('');
   const [zoom,setZoom]=useState(1);
   const [wasd,setWasd]=useState(false);
 
-  useEffect(()=>{fetch('/api/animals').then(r=>r.json()).then(setAnimals).catch(()=>{});},[]);
+  useEffect(()=>{
+    fetch('/api/animals').then(r=>r.json()).then(setAnimals).catch(()=>{});
+    fetch('/api/saved-patterns').then(r=>r.json()).then(setSaved).catch(()=>{});
+  },[]);
   // WASD: toggle the global flag that the raw handler in index.html checks
   useEffect(()=>{
     window.__leniaWASD = wasd;
@@ -175,11 +181,30 @@ export default function App() {
           </div>
         </div>
         <div className="panel">
-          <div className="panel-title">Library ({fa.length})</div>
-          <input type="text" id="af" name="af" placeholder="Search..." value={flt} onChange={e=>setFlt(e.target.value)} style={{width:'100%',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11,marginBottom:3}}/>
-          <div className="animal-list">
-            {fa.slice(0,60).map(a=><div key={a.code} className={`animal-item ${sel===a.code?'active':''}`} onClick={()=>{setSel(a.code);send(`load ${a.code}`);}}><b>{a.code}</b> {a.name}</div>)}
+          <div style={{display:'flex',gap:2,marginBottom:4}}>
+            <button className={`btn ${libTab==='animals'?'active':''}`} style={{flex:1,fontSize:10}} onClick={()=>setLibTab('animals')}>Library ({fa.length})</button>
+            <button className={`btn ${libTab==='saved'?'active':''}`} style={{flex:1,fontSize:10}} onClick={()=>setLibTab('saved')}>Saved ({saved.length})</button>
           </div>
+          {libTab==='animals' ? <>
+            <input type="text" id="af" name="af" placeholder="Search..." value={flt} onChange={e=>setFlt(e.target.value)} style={{width:'100%',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11,marginBottom:3}}/>
+            <div className="animal-list">
+              {fa.slice(0,60).map(a=><div key={a.code} className={`animal-item ${sel===a.code?'active':''}`} onClick={()=>{setSel(a.code);send(`load ${a.code}`);}}><b>{a.code}</b> {a.name}</div>)}
+            </div>
+          </> : <>
+            <div style={{display:'flex',gap:3,marginBottom:4}}>
+              <input type="text" id="save-name" name="save-name" placeholder="Pattern name..." value={saveName} onChange={e=>setSaveName(e.target.value)} style={{flex:1,background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11}}/>
+              <button className="btn" title="Save current organism state with this name" onClick={()=>{
+                fetch('/api/save-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:saveName||'unnamed'})})
+                  .then(r=>r.json()).then(()=>{fetch('/api/saved-patterns').then(r=>r.json()).then(setSaved);setSaveName('');}).catch(()=>{});
+              }}>💾 Save</button>
+            </div>
+            <div className="animal-list">
+              {saved.map((s,i)=><div key={i} className="animal-item" title={`Saved ${s.saved_at}\nmass=${s.mass?.toFixed(1)} R=${s.params?.R} m=${s.params?.m}`} onClick={()=>{
+                fetch('/api/load-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params})}).catch(()=>{});
+              }}><b>{s.name}</b> <span style={{color:'var(--text-dim)',fontSize:10}}>m={s.mass?.toFixed(0)} R={s.params?.R}</span></div>)}
+              {saved.length===0 && <div style={{padding:8,color:'var(--text-dim)',fontSize:11,textAlign:'center'}}>No saved patterns yet. Enter a name above and click Save.</div>}
+            </div>
+          </>}
         </div>
       </div>
 
@@ -194,8 +219,8 @@ export default function App() {
             </div>
             {/* Bottom strip — 35%: growth + potential + phase */}
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)" zoom={zoom}/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f" zoom={zoom}/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -218,8 +243,8 @@ export default function App() {
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)" zoom={zoom}/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f" zoom={zoom}/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -242,8 +267,8 @@ export default function App() {
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)" zoom={zoom}/>
+              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f" zoom={zoom}/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>

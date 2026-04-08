@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -174,6 +174,70 @@ const httpServer = createServer((req, res) => {
         res.end(JSON.stringify({ error: e.message }));
       }
     });
+    return;
+  }
+
+  // Save/load user patterns
+  if (url.pathname === '/api/save-pattern' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { name } = JSON.parse(body);
+        const frame = latestFrame;
+        if (!frame) { res.writeHead(400); res.end(JSON.stringify({error:'no frame'})); return; }
+        const pattern = { name: name || 'unnamed', code: 'user_' + Date.now(),
+          params: frame.params, cells_b64: frame.cells_b64, width: frame.width, height: frame.height,
+          saved_at: new Date().toISOString(), mass: frame.mass };
+        // Append to saved.json
+        const savedPath = join(ROOT, 'saved_patterns.json');
+        let saved = [];
+        try { saved = JSON.parse(readFileSync(savedPath, 'utf-8')); } catch(e) {}
+        saved.push(pattern);
+        writeFileSync(savedPath, JSON.stringify(saved, null, 2));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, count: saved.length }));
+      } catch(e) {
+        res.writeHead(400); res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/load-pattern' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { params } = JSON.parse(body);
+        // Set params then random to reset
+        if (params) {
+          sendCommand(`set_R ${params.R}`);
+          sendCommand(`set_T ${params.T}`);
+          sendCommand(`set_m ${params.m}`);
+          sendCommand(`set_s ${params.s}`);
+          sendCommand(`set_kn ${params.kn}`);
+          sendCommand(`set_gn ${params.gn}`);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch(e) {
+        res.writeHead(400); res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/saved-patterns') {
+    const savedPath = join(ROOT, 'saved_patterns.json');
+    try {
+      const data = readFileSync(savedPath, 'utf-8');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(data);
+    } catch(e) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('[]');
+    }
     return;
   }
 
