@@ -4,6 +4,8 @@
 #include <set>
 #include <queue>
 #include <complex>
+#include <array>
+#include <cstdint>
 
 namespace lenia {
 namespace analysis {
@@ -13,18 +15,33 @@ namespace analysis {
 // ============================================================================
 
 double shannon_entropy(const NDArray& cells, int n_bins) {
+    const int total = cells.size();
+    if (total == 0 || n_bins <= 0) return 0;
+
+    double H = 0.0;
+    if (n_bins == 32) {
+        std::array<int, 32> bins{};
+        for (int i = 0; i < total; ++i) {
+            int bin = std::clamp(static_cast<int>(cells[i] * 32), 0, 31);
+            bins[bin]++;
+        }
+        for (int count : bins) {
+            if (count > 0) {
+                double p = static_cast<double>(count) / total;
+                H -= p * std::log2(p);
+            }
+        }
+        return H;
+    }
+
     std::vector<int> bins(n_bins, 0);
-    int total = 0;
-    for (int i = 0; i < cells.size(); ++i) {
+    for (int i = 0; i < total; ++i) {
         int bin = std::clamp(static_cast<int>(cells[i] * n_bins), 0, n_bins - 1);
         bins[bin]++;
-        total++;
     }
-    if (total == 0) return 0;
-    double H = 0;
-    for (int b = 0; b < n_bins; ++b) {
-        if (bins[b] > 0) {
-            double p = static_cast<double>(bins[b]) / total;
+    for (int count : bins) {
+        if (count > 0) {
+            double p = static_cast<double>(count) / total;
             H -= p * std::log2(p);
         }
     }
@@ -195,31 +212,38 @@ AutopoiesisResult autopoiesis(const NDArray& cells, double threshold) {
 int count_components(const NDArray& cells, double threshold) {
     if (cells.ndim() != 2) return 0;
     int rows = cells.shape(0), cols = cells.shape(1);
-    std::vector<bool> visited(rows * cols, false);
+    std::vector<uint8_t> visited(rows * cols, 0);
+    std::vector<int> queue;
+    queue.reserve(rows * cols / 8);
     int components = 0;
+    static constexpr int DR[8] = {-1,-1,-1,0,0,1,1,1};
+    static constexpr int DC[8] = {-1,0,1,-1,1,-1,0,1};
 
     for (int r = 0; r < rows; ++r) {
+        const int row_offset = r * cols;
         for (int c = 0; c < cols; ++c) {
-            if (cells.at2(r, c) < threshold || visited[r * cols + c]) continue;
+            const int start = row_offset + c;
+            if (cells.at2(r, c) < threshold || visited[start]) continue;
 
-            // BFS flood fill
             components++;
-            std::queue<std::pair<int, int>> q;
-            q.push({r, c});
-            visited[r * cols + c] = true;
+            queue.clear();
+            queue.push_back(start);
+            visited[start] = 1;
 
-            while (!q.empty()) {
-                auto [cr, cc] = q.front(); q.pop();
-                for (int dr = -1; dr <= 1; ++dr) {
-                    for (int dc = -1; dc <= 1; ++dc) {
-                        if (dr == 0 && dc == 0) continue;
-                        int nr = cr + dr, nc = cc + dc;
-                        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
-                        if (visited[nr * cols + nc]) continue;
-                        if (cells.at2(nr, nc) < threshold) continue;
-                        visited[nr * cols + nc] = true;
-                        q.push({nr, nc});
-                    }
+            for (size_t head = 0; head < queue.size(); ++head) {
+                const int current = queue[head];
+                const int cr = current / cols;
+                const int cc = current % cols;
+
+                for (int i = 0; i < 8; ++i) {
+                    const int nr = cr + DR[i];
+                    const int nc = cc + DC[i];
+                    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+                    const int next = nr * cols + nc;
+                    if (visited[next]) continue;
+                    if (cells.at2(nr, nc) < threshold) continue;
+                    visited[next] = 1;
+                    queue.push_back(next);
                 }
             }
         }

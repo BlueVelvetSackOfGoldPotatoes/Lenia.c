@@ -109,7 +109,7 @@ std::optional<Organism> DiscoveryEngine::evaluate_candidate(const Params& params
         automaton.calc_once(true);
         analyzer.calc_stats();
 
-        double mass = board.cells.sum();
+        double mass = analyzer.mass();
         mass_history.push_back(mass);
         speed_history.push_back(analyzer.speed());
 

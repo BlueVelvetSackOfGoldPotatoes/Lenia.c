@@ -84,6 +84,8 @@ private:
 
     // Per-channel FFT cache
     std::vector<ComplexVec> channel_ffts_;
+    std::vector<std::vector<double>> channel_deltas_;
+    std::vector<double> channel_delta_weights_;
 
     // Coordinate grids
     std::vector<std::vector<double>> X_;

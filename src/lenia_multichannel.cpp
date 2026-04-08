@@ -74,8 +74,11 @@ MultiAutomaton::MultiAutomaton(MultiBoard& world) : world_(world) {
 
     // Per-channel FFT cache
     channel_ffts_.resize(world_.num_channels);
+    channel_deltas_.resize(world_.num_channels);
+    channel_delta_weights_.resize(world_.num_channels, 0.0);
     for (int c = 0; c < world_.num_channels; ++c) {
         channel_ffts_[c].resize(n);
+        channel_deltas_[c].resize(n, 0.0);
     }
 
     // Coordinate grids
@@ -153,11 +156,9 @@ void MultiAutomaton::calc_once(bool is_update) {
     // FFT all channels
     for (int c = 0; c < nc; ++c) {
         fft_->forward(world_.channels[c].data(), channel_ffts_[c]);
+        std::fill(channel_deltas_[c].begin(), channel_deltas_[c].end(), 0.0);
+        channel_delta_weights_[c] = 0.0;
     }
-
-    // Accumulate growth per channel
-    std::vector<std::vector<double>> D(nc, std::vector<double>(n, 0.0));
-    std::vector<double> Dn(nc, 0.0);
 
     for (int k = 0; k < num_kernels_; ++k) {
         const auto& kp = world_.kernels[k];
@@ -180,17 +181,19 @@ void MultiAutomaton::calc_once(bool is_update) {
         // Accumulate into target channel
         double h = kp.h;
         for (int i = 0; i < n; ++i) {
-            D[c1][i] += dt * h * fields_[k][i];
+            channel_deltas_[c1][i] += dt * h * fields_[k][i];
         }
-        Dn[c1] += h;
+        channel_delta_weights_[c1] += h;
     }
 
     // Update each channel
     for (int c = 0; c < nc; ++c) {
         auto& cells = world_.channels[c].data();
-        if (Dn[c] > 0) {
+        auto& delta = channel_deltas_[c];
+        double delta_weight = channel_delta_weights_[c];
+        if (delta_weight > 0) {
             for (int i = 0; i < n; ++i) {
-                double new_val = cells[i] + D[c][i] / Dn[c];
+                double new_val = cells[i] + delta[i] / delta_weight;
                 if (add_noise > 0.0) {
                     // Simple deterministic noise based on position
                     new_val *= 1.0 + (((i * 7919 + gen_) % 1000) / 1000.0 - 0.5) * (add_noise / 10.0);
