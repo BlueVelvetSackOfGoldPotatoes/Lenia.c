@@ -137,41 +137,47 @@ int main(int argc, char* argv[]) {
                 else if (line == "search_down") { app.toggle_search(-1); }
                 else if (line == "search_stop") { app.stop_search(); }
                 else if (line.substr(0, 5) == "stim ") {
-                    // Stimulus: deposit a small blob near the organism in a direction
-                    // Format: "stim dx dy" where dx,dy in {-1,0,1}
-                    // Places material ahead of center of mass to attract the organism
+                    // Steering: asymmetric nudge of the organism.
+                    // Slightly boost cells on the front side, slightly dampen on the back.
+                    // This creates differential growth that steers the organism without
+                    // creating a separate blob or killing it.
                     std::istringstream ss(line.substr(5));
                     int dx = 0, dy = 0;
                     ss >> dx >> dy;
                     if (app.world().cells.ndim() == 2) {
                         int rows = app.world().cells.shape(0);
                         int cols = app.world().cells.shape(1);
+                        auto& cells = app.world().cells.data();
                         // Find center of mass
                         double cx = 0, cy = 0, total = 0;
-                        const auto& cells = app.world().cells.data();
-                        for (int r = 0; r < rows; ++r) {
+                        for (int r = 0; r < rows; ++r)
                             for (int c = 0; c < cols; ++c) {
                                 double v = cells[r * cols + c];
                                 cx += v * c; cy += v * r; total += v;
                             }
-                        }
                         if (total > 0.1) {
                             cx /= total; cy /= total;
-                            int R = app.world().params.R;
-                            // Place stimulus blob at R*1.5 distance from center in the given direction
-                            double stim_r = R * 1.5;
-                            int sr = static_cast<int>(cy + dy * stim_r);
-                            int sc = static_cast<int>(cx + dx * stim_r);
-                            // Deposit a gaussian blob of material
-                            double strength = 0.3;
-                            double sigma = R * 0.4;
-                            for (int r = -static_cast<int>(sigma*2); r <= static_cast<int>(sigma*2); ++r) {
-                                for (int c = -static_cast<int>(sigma*2); c <= static_cast<int>(sigma*2); ++c) {
-                                    int pr = ((sr + r) % rows + rows) % rows;
-                                    int pc = ((sc + c) % cols + cols) % cols;
-                                    double d2 = r*r + c*c;
-                                    double deposit = strength * std::exp(-d2 / (2 * sigma * sigma));
-                                    app.world().cells.at2(pr, pc) = std::min(1.0, app.world().cells.at2(pr, pc) + deposit);
+                            // For each cell with value > 0, compute how much it's
+                            // "in front" vs "behind" the desired direction.
+                            // Front cells get a tiny boost, back cells get a tiny dampen.
+                            double strength = 0.03; // very gentle
+                            double dir_len = std::sqrt(dx*dx + dy*dy);
+                            if (dir_len < 0.1) dir_len = 1.0;
+                            double ndx = dx / dir_len, ndy = dy / dir_len;
+                            for (int r = 0; r < rows; ++r) {
+                                for (int c = 0; c < cols; ++c) {
+                                    double v = cells[r * cols + c];
+                                    if (v < 0.01) continue;
+                                    // Signed distance along direction from center
+                                    double dr = r - cy, dc = c - cx;
+                                    double proj = dc * ndx + dr * ndy; // positive = front
+                                    // Normalize by organism radius
+                                    double dist = std::sqrt(dr*dr + dc*dc);
+                                    if (dist < 1) continue;
+                                    double norm_proj = proj / dist; // [-1, 1]
+                                    // Front: boost. Back: dampen.
+                                    double delta = strength * norm_proj * v;
+                                    cells[r * cols + c] = std::clamp(v + delta, 0.0, 1.0);
                                 }
                             }
                         }
