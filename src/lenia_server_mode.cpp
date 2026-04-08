@@ -1,41 +1,78 @@
 /**
- * Lenia server mode: runs simulation and outputs state as JSON frames to stdout.
- * Designed to be spawned by a Node.js API server that pipes the output to WebSocket clients.
+ * Lenia server mode: runs simulation and writes binary frames to stdout.
+ * Designed to be spawned by a Node.js API server that forwards binary frames
+ * directly to WebSocket clients.
  *
- * Output format (one JSON object per line):
- * {"gen":N, "time":T, "mass":M, "gyradius":G, "speed":S, "symmetry":K,
- *  "lyapunov":L, "is_empty":bool, "is_full":bool,
- *  "params":{"R":R,"T":T,"m":m,"s":s,"kn":kn,"gn":gn,"b":[...]},
- *  "cells_b64":"base64_encoded_uint8_array",
- *  "width":W, "height":H}
+ * Packet format:
+ *   bytes  0.. 3  magic "LFRM"
+ *   bytes  4.. 7  uint32_le version (=1)
+ *   bytes  8..11  uint32_le metadata JSON byte length
+ *   bytes 12..15  uint32_le cells plane byte length
+ *   bytes 16..19  uint32_le potential plane byte length
+ *   bytes 20..23  uint32_le field plane byte length
+ *   bytes 24..    UTF-8 JSON metadata, then raw uint8 cells/potential/field planes
  */
 #include "lenia_app.h"
 #include "lenia_analysis.h"
+#include <array>
+#include <cerrno>
 #include <iostream>
 #include <sstream>
 #include <cstdlib>
+#include <cstdint>
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
 #include <chrono>
 #include <thread>
 
-static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+namespace {
 
-static std::string base64_encode(const std::vector<uint8_t>& data) {
-    std::string out;
-    out.reserve((data.size() + 2) / 3 * 4);
-    for (size_t i = 0; i < data.size(); i += 3) {
-        uint32_t n = static_cast<uint32_t>(data[i]) << 16;
-        if (i + 1 < data.size()) n |= static_cast<uint32_t>(data[i + 1]) << 8;
-        if (i + 2 < data.size()) n |= data[i + 2];
-        out += B64[(n >> 18) & 0x3F];
-        out += B64[(n >> 12) & 0x3F];
-        out += (i + 1 < data.size()) ? B64[(n >> 6) & 0x3F] : '=';
-        out += (i + 2 < data.size()) ? B64[n & 0x3F] : '=';
-    }
-    return out;
+constexpr size_t FRAME_HEADER_SIZE = 24;
+constexpr uint32_t FRAME_VERSION = 1;
+constexpr char FRAME_MAGIC[4] = {'L', 'F', 'R', 'M'};
+
+void write_u32_le(uint8_t* dst, uint32_t value) {
+    dst[0] = static_cast<uint8_t>(value & 0xFFu);
+    dst[1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+    dst[2] = static_cast<uint8_t>((value >> 16) & 0xFFu);
+    dst[3] = static_cast<uint8_t>((value >> 24) & 0xFFu);
 }
+
+bool write_all(int fd, const void* data, size_t size) {
+    const uint8_t* ptr = static_cast<const uint8_t*>(data);
+    size_t written = 0;
+    while (written < size) {
+        ssize_t n = ::write(fd, ptr + written, size - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        written += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+bool write_frame_packet(int fd, const std::string& metadata,
+                        const std::vector<uint8_t>& cells,
+                        const std::vector<uint8_t>& potential,
+                        const std::vector<uint8_t>& field) {
+    std::array<uint8_t, FRAME_HEADER_SIZE> header{};
+    std::memcpy(header.data(), FRAME_MAGIC, sizeof(FRAME_MAGIC));
+    write_u32_le(header.data() + 4, FRAME_VERSION);
+    write_u32_le(header.data() + 8, static_cast<uint32_t>(metadata.size()));
+    write_u32_le(header.data() + 12, static_cast<uint32_t>(cells.size()));
+    write_u32_le(header.data() + 16, static_cast<uint32_t>(potential.size()));
+    write_u32_le(header.data() + 20, static_cast<uint32_t>(field.size()));
+
+    return write_all(fd, header.data(), header.size()) &&
+           write_all(fd, metadata.data(), metadata.size()) &&
+           write_all(fd, cells.data(), cells.size()) &&
+           write_all(fd, potential.data(), potential.size()) &&
+           write_all(fd, field.data(), field.size());
+}
+
+} // namespace
 
 static std::string escape_json(const std::string& s) {
     std::string out;
@@ -88,7 +125,10 @@ int main(int argc, char* argv[]) {
     app.set_running(true);
 
     auto frame_duration = std::chrono::microseconds(1000000 / fps);
-    std::vector<uint8_t> cells_u8(size * size);
+    const int view_size = size * size;
+    std::vector<uint8_t> cells_u8(view_size);
+    std::vector<uint8_t> pot_u8(view_size, 0);
+    std::vector<uint8_t> fld_u8(view_size, 0);
 
     // Read commands from stdin, write state frames to stdout
     // Commands (one per line): "step", "pause", "run", "random", "random_params",
@@ -101,8 +141,6 @@ int main(int argc, char* argv[]) {
     bool running = true;
     char stdin_buf[4096];
     std::string stdin_accum;
-
-    std::cout << std::unitbuf;
 
     while (running) {
         auto frame_start = std::chrono::high_resolution_clock::now();
@@ -168,76 +206,73 @@ int main(int argc, char* argv[]) {
         const auto& cells = app.world().cells.data();
         const auto& potential = app.automaton().potential();
         const auto& field_data = app.automaton().field();
-        int view_size = size * size;
-        std::vector<uint8_t> pot_u8(view_size, 0);
-        std::vector<uint8_t> fld_u8(view_size, 0);
         if (dim == 3) {
             int z_mid = size / 2;
             int slice_offset = z_mid * size * size;
-            for (int i = 0; i < view_size && (slice_offset + i) < static_cast<int>(cells.size()); ++i) {
+            for (int i = 0; i < view_size; ++i) {
                 cells_u8[i] = static_cast<uint8_t>(std::clamp(cells[slice_offset + i] * 255.0, 0.0, 255.0));
             }
         } else {
-            for (int i = 0; i < view_size && i < static_cast<int>(cells.size()); ++i) {
+            for (int i = 0; i < view_size; ++i) {
                 cells_u8[i] = static_cast<uint8_t>(std::clamp(cells[i] * 255.0, 0.0, 255.0));
             }
         }
-        std::string cells_b64 = base64_encode(cells_u8);
 
         // Encode potential (normalize to 0-255 from its actual range)
         if (!potential.empty()) {
-            double pmin = *std::min_element(potential.begin(), potential.end());
-            double pmax = *std::max_element(potential.begin(), potential.end());
-            double prange = std::max(pmax - pmin, 1e-10);
-            for (int i = 0; i < view_size && i < static_cast<int>(potential.size()); ++i) {
+            const auto [pmin_it, pmax_it] = std::minmax_element(potential.begin(), potential.end());
+            const double pmin = *pmin_it;
+            const double pmax = *pmax_it;
+            const double prange = std::max(pmax - pmin, 1e-10);
+            for (int i = 0; i < view_size; ++i) {
                 pot_u8[i] = static_cast<uint8_t>(std::clamp((potential[i] - pmin) / prange * 255.0, 0.0, 255.0));
             }
         }
-        std::string pot_b64 = base64_encode(pot_u8);
 
         // Encode field (normalize -1..+1 to 0..255)
         if (!field_data.empty()) {
-            for (int i = 0; i < view_size && i < static_cast<int>(field_data.size()); ++i) {
+            for (int i = 0; i < view_size; ++i) {
                 fld_u8[i] = static_cast<uint8_t>(std::clamp((field_data[i] + 1.0) * 0.5 * 255.0, 0.0, 255.0));
             }
         }
-        std::string fld_b64 = base64_encode(fld_u8);
-
-        // Output frame as JSON
-        std::cout << "{\"gen\":" << app.automaton().gen()
-                  << ",\"time\":" << app.automaton().time()
-                  << ",\"mass\":" << app.analyzer().mass()
-                  << ",\"growth\":" << app.analyzer().growth()
-                  << ",\"speed\":" << app.analyzer().speed()
-                  << ",\"gyradius\":" << app.analyzer().gyradius()
-                  << ",\"lyapunov\":" << app.analyzer().lyapunov()
-                  << ",\"symmetry\":" << app.analyzer().symmetry()
-                  << ",\"is_empty\":" << (app.analyzer().is_empty() ? "true" : "false")
-                  << ",\"is_full\":" << (app.analyzer().is_full() ? "true" : "false")
-                  << ",\"running\":" << (app.is_running() ? "true" : "false")
-                  << ",\"params\":{\"R\":" << app.world().params.R
-                  << ",\"T\":" << app.world().params.T
-                  << ",\"m\":" << app.world().params.m
-                  << ",\"s\":" << app.world().params.s
-                  << ",\"kn\":" << app.world().params.kn
-                  << ",\"gn\":" << app.world().params.gn
-                  << ",\"b\":[";
+        std::ostringstream meta;
+        meta << "{\"gen\":" << app.automaton().gen()
+             << ",\"time\":" << app.automaton().time()
+             << ",\"mass\":" << app.analyzer().mass()
+             << ",\"growth\":" << app.analyzer().growth()
+             << ",\"speed\":" << app.analyzer().speed()
+             << ",\"gyradius\":" << app.analyzer().gyradius()
+             << ",\"lyapunov\":" << app.analyzer().lyapunov()
+             << ",\"symmetry\":" << app.analyzer().symmetry()
+             << ",\"is_empty\":" << (app.analyzer().is_empty() ? "true" : "false")
+             << ",\"is_full\":" << (app.analyzer().is_full() ? "true" : "false")
+             << ",\"running\":" << (app.is_running() ? "true" : "false")
+             << ",\"params\":{\"R\":" << app.world().params.R
+             << ",\"T\":" << app.world().params.T
+             << ",\"m\":" << app.world().params.m
+             << ",\"s\":" << app.world().params.s
+             << ",\"kn\":" << app.world().params.kn
+             << ",\"gn\":" << app.world().params.gn
+             << ",\"b\":[";
         for (size_t i = 0; i < app.world().params.b.size(); ++i) {
-            if (i > 0) std::cout << ",";
-            std::cout << app.world().params.b[i];
+            if (i > 0) meta << ",";
+            meta << app.world().params.b[i];
         }
-        std::cout << "]}"
-                  << ",\"name\":\"" << escape_json(app.world().names[1]) << "\""
-                  << ",\"code\":\"" << escape_json(app.world().names[0]) << "\""
-                  << ",\"components\":" << (app.automaton().gen() % 10 == 0 ? lenia::analysis::count_components(app.world().cells) : -1)
-                  << ",\"entropy\":" << (app.automaton().gen() % 10 == 0 ? lenia::analysis::shannon_entropy(app.world().cells) : -1)
-                  << ",\"dim\":" << dim
-                  << ",\"width\":" << size
-                  << ",\"height\":" << size
-                  << ",\"cells_b64\":\"" << cells_b64 << "\""
-                  << ",\"potential_b64\":\"" << pot_b64 << "\""
-                  << ",\"field_b64\":\"" << fld_b64 << "\""
-                  << "}" << std::endl;
+        meta << "]}"
+             << ",\"name\":\"" << escape_json(app.world().names[1]) << "\""
+             << ",\"code\":\"" << escape_json(app.world().names[0]) << "\""
+             << ",\"components\":" << (app.automaton().gen() % 10 == 0 ? lenia::analysis::count_components(app.world().cells) : -1)
+             << ",\"entropy\":" << (app.automaton().gen() % 10 == 0 ? lenia::analysis::shannon_entropy(app.world().cells) : -1)
+             << ",\"dim\":" << dim
+             << ",\"width\":" << size
+             << ",\"height\":" << size
+             << "}";
+
+        const std::string metadata = meta.str();
+        if (!write_frame_packet(STDOUT_FILENO, metadata, cells_u8, pot_u8, fld_u8)) {
+            running = false;
+            break;
+        }
 
         // Rate limit
         auto elapsed = std::chrono::high_resolution_clock::now() - frame_start;

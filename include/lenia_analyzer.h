@@ -59,7 +59,7 @@ public:
     void calc_symmetry();
 
     /// Get current stat row as a StatRow struct.
-    StatRow get_stat_row() const;
+    StatRow get_stat_row();
 
     /// Add current stats to the time series.
     void add_stats();
@@ -68,6 +68,8 @@ public:
     void new_segment();
     void clear_segment();
     void invalidate_segment();
+    void ensure_coordinate_cache(int rows, int cols, int R);
+    void ensure_mass_asymmetry();
 
     /// Center the organism at the world origin.
     void center_world();
@@ -107,6 +109,7 @@ private:
     double m_angle_ = 0;
     double m_rotate_ = 0;
     double mass_asym_ = 0;
+    bool mass_asym_dirty_ = false;
     double lyapunov_ = 0;
     double symm_sides_ = 0;
     double symm_angle_ = 0;
@@ -129,6 +132,14 @@ private:
     bool has_density_ema_ = false;
     double ema_alpha_ = 0.05;
     std::vector<double> rotate_wavg_;
+
+    int cached_rows_ = 0;
+    int cached_cols_ = 0;
+    int cached_R_ = 0;
+    std::vector<double> x_coords_;
+    std::vector<double> y_coords_;
+    std::vector<double> x_sq_;
+    std::vector<double> y_sq_;
 
     StatRow current_;
 };

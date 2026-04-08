@@ -42,6 +42,7 @@ void Analyzer::reset_values() {
     m_angle_ = 0;
     m_rotate_ = 0;
     mass_asym_ = 0;
+    mass_asym_dirty_ = false;
     lyapunov_ = 0;
 }
 
@@ -75,12 +76,75 @@ void Analyzer::clear_series() {
     series.clear();
 }
 
-StatRow Analyzer::get_stat_row() const {
+void Analyzer::ensure_coordinate_cache(int rows, int cols, int R) {
+    if (rows == cached_rows_ && cols == cached_cols_ && R == cached_R_) return;
+
+    cached_rows_ = rows;
+    cached_cols_ = cols;
+    cached_R_ = R;
+
+    x_coords_.resize(cols);
+    x_sq_.resize(cols);
+    y_coords_.resize(rows);
+    y_sq_.resize(rows);
+
+    const double inv_R = 1.0 / static_cast<double>(R);
+    const int mid_r = rows / 2;
+    const int mid_c = cols / 2;
+
+    for (int c = 0; c < cols; ++c) {
+        const double xr = static_cast<double>(c - mid_c) * inv_R;
+        x_coords_[c] = xr;
+        x_sq_[c] = xr * xr;
+    }
+    for (int r = 0; r < rows; ++r) {
+        const double yr = static_cast<double>(r - mid_r) * inv_R;
+        y_coords_[r] = yr;
+        y_sq_[r] = yr * yr;
+    }
+}
+
+void Analyzer::ensure_mass_asymmetry() {
+    if (!mass_asym_dirty_) return;
+    mass_asym_dirty_ = false;
+    mass_asym_ = 0.0;
+
+    if (world_.cells.ndim() != 2) return;
+    if (m_last_center_.size() != 2 || m_center_.size() != 2) return;
+
+    const int rows = world_.cells.shape(0);
+    const int cols = world_.cells.shape(1);
+    const int R = world_.params.R;
+    const int mid_r = rows / 2;
+    const int mid_c = cols / 2;
+    const auto& A = world_.cells.data();
+
+    const double x0 = m_last_center_[0] * R + mid_c - last_shift_idx_[0];
+    const double y0 = m_last_center_[1] * R + mid_r - last_shift_idx_[1];
+    const double x1 = m_center_[0] * R + mid_c;
+    const double y1 = m_center_[1] * R + mid_r;
+
+    double mass_right = 0.0;
+    double mass_left = 0.0;
+    for (int r = 0; r < rows; ++r) {
+        const int row_offset = r * cols;
+        for (int c = 0; c < cols; ++c) {
+            const double sign_val = (x1 - x0) * (r - y0) - (y1 - y0) * (c - x0);
+            if (sign_val > 0) mass_right += A[row_offset + c];
+            else if (sign_val < 0) mass_left += A[row_offset + c];
+        }
+    }
+    mass_asym_ = mass_right - mass_left;
+}
+
+StatRow Analyzer::get_stat_row() {
     int R = world_.params.R;
     int T = world_.params.T;
     double pm = world_.params.m;
     double ps = world_.params.s;
     double RN = static_cast<double>(R * R);  // R^DIM for 2D
+
+    ensure_mass_asymmetry();
 
     StatRow row;
     row.p_m = pm;
@@ -120,66 +184,65 @@ void Analyzer::calc_stats(int polar_what) {
     int cols = world_.cells.shape(1);
     int mid_r = rows / 2;
     int mid_c = cols / 2;
-    int n = rows * cols;
+    ensure_coordinate_cache(rows, cols, R);
 
     const auto& A = world_.cells.data();
     const auto& F = automaton_.field();
+    const auto& change = automaton_.change();
 
-    // Mass and growth
-    double m0 = 0, g0 = 0;
-    for (int i = 0; i < n; ++i) {
-        m0 += A[i];
-        g0 += std::max(0.0, F[i]);
+    double m0 = 0.0;
+    double g0 = 0.0;
+    double border_sum = 0.0;
+    double mx_sum = 0.0, my_sum = 0.0;
+    double mx2_sum = 0.0, my2_sum = 0.0;
+    double gx_sum = 0.0, gy_sum = 0.0;
+    double change_sum = 0.0;
+
+    for (int r = 0; r < rows; ++r) {
+        const int row_offset = r * cols;
+        const double yr = y_coords_[r];
+        const double yr2 = y_sq_[r];
+        const bool border_row = (r == 0 || r == rows - 1);
+
+        for (int c = 0; c < cols; ++c) {
+            const int idx = row_offset + c;
+            const double xr = x_coords_[c];
+            const double a = A[idx];
+            const double g = std::max(0.0, F[idx]);
+
+            m0 += a;
+            g0 += g;
+            mx_sum += a * xr;
+            my_sum += a * yr;
+            mx2_sum += a * x_sq_[c];
+            my2_sum += a * yr2;
+            gx_sum += g * xr;
+            gy_sum += g * yr;
+            change_sum += change[idx];
+
+            if (border_row || c == 0 || c == cols - 1) {
+                border_sum += a;
+            }
+        }
     }
+
     mass_ = m0;
     growth_ = g0;
     is_empty_ = (mass_ < EPSILON);
-
-    // Border check (is_full)
-    double border_sum = 0;
-    for (int c = 0; c < cols; ++c) {
-        border_sum += A[0 * cols + c];               // top row
-        border_sum += A[(rows - 1) * cols + c];      // bottom row
-    }
-    for (int r = 0; r < rows; ++r) {
-        border_sum += A[r * cols + 0];               // left col
-        border_sum += A[r * cols + (cols - 1)];      // right col
-    }
     is_full_ = (border_sum > 0);
 
     if (m0 > EPSILON) {
-        // Center of mass
-        double mx_sum = 0, my_sum = 0;
-        double mx2_sum = 0, my2_sum = 0;
-        for (int r = 0; r < rows; ++r) {
-            double yr = static_cast<double>(r - mid_r) / R;
-            for (int c = 0; c < cols; ++c) {
-                double xr = static_cast<double>(c - mid_c) / R;
-                double a = A[r * cols + c];
-                mx_sum += a * xr;
-                my_sum += a * yr;
-                mx2_sum += a * xr * xr;
-                my2_sum += a * yr * yr;
-            }
-        }
-        m_center_ = {mx_sum / m0, my_sum / m0};
+        m_center_.resize(2);
+        m_center_[0] = mx_sum / m0;
+        m_center_[1] = my_sum / m0;
         double mu_x2 = mx2_sum - m_center_[0] * mx_sum;
         double mu_y2 = my2_sum - m_center_[1] * my_sum;
         inertia_ = mu_x2 + mu_y2;
 
-        // Center of growth
         if (g0 > EPSILON) {
-            double gx_sum = 0, gy_sum = 0;
-            for (int r = 0; r < rows; ++r) {
-                double yr = static_cast<double>(r - mid_r) / R;
-                for (int c = 0; c < cols; ++c) {
-                    double xr = static_cast<double>(c - mid_c) / R;
-                    double g = std::max(0.0, F[r * cols + c]);
-                    gx_sum += g * xr;
-                    gy_sum += g * yr;
-                }
-            }
-            g_center_ = {gx_sum / g0, gy_sum / g0};
+            g_center_.resize(2);
+            g_center_[0] = gx_sum / g0;
+            g_center_[1] = gy_sum / g0;
             double dx = m_center_[0] - g_center_[0];
             double dy = m_center_[1] - g_center_[1];
             mg_dist_ = std::sqrt(dx * dx + dy * dy);
@@ -198,21 +261,7 @@ void Analyzer::calc_stats(int polar_what) {
             m_rotate_ = m_angle_ - m_last_angle_;
             m_rotate_ = std::fmod(m_rotate_ + 540.0, 360.0) - 180.0;
             if (automaton_.gen() <= 2) m_rotate_ = 0;
-
-            // Mass asymmetry (2D only)
-            double x0 = m_last_center_[0] * R + mid_c - last_shift_idx_[0];
-            double y0 = m_last_center_[1] * R + mid_r - last_shift_idx_[1];
-            double x1 = m_center_[0] * R + mid_c;
-            double y1 = m_center_[1] * R + mid_r;
-            double mass_right = 0, mass_left = 0;
-            for (int r = 0; r < rows; ++r) {
-                for (int c = 0; c < cols; ++c) {
-                    double sign_val = (x1 - x0) * (r - y0) - (y1 - y0) * (c - x0);
-                    if (sign_val > 0) mass_right += A[r * cols + c];
-                    else if (sign_val < 0) mass_left += A[r * cols + c];
-                }
-            }
-            mass_asym_ = mass_right - mass_left;
+            mass_asym_dirty_ = true;
         }
 
         // Symmetry analysis
@@ -220,10 +269,6 @@ void Analyzer::calc_stats(int polar_what) {
             calc_symmetry();
         }
 
-        // Lyapunov exponent (running average of log|sum(change)|)
-        double change_sum = 0;
-        const auto& change = automaton_.change();
-        for (double v : change) change_sum += v;
         if (automaton_.gen() > 0) {
             double log_change = std::log(std::max(EPSILON, std::abs(change_sum)));
             lyapunov_ += (log_change - lyapunov_) / automaton_.gen();

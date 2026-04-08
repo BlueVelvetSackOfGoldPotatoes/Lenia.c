@@ -16,12 +16,62 @@ const PORT = process.env.PORT || 3100;
 const SIM_SIZE = parseInt(process.env.SIM_SIZE || '128');
 const SIM_FPS = parseInt(process.env.SIM_FPS || '30');
 let SIM_DIM = parseInt(process.env.SIM_DIM || '2');
+const FRAME_MAGIC = Buffer.from('LFRM');
+const FRAME_HEADER_SIZE = 24;
+const MAX_WS_BUFFERED_BYTES = 1024 * 1024;
 
 let simProcess = null;
-let latestFrame = null;
+let latestPacket = null;
+let latestParsedPacket = null;
+let latestParsedSource = null;
 let wsClients = new Set();
 
 let currentSize = SIM_SIZE;
+
+function parseFramePacket(packet) {
+  if (packet.length < FRAME_HEADER_SIZE) {
+    throw new Error('short frame header');
+  }
+  if (!packet.subarray(0, 4).equals(FRAME_MAGIC)) {
+    throw new Error('bad frame magic');
+  }
+
+  const version = packet.readUInt32LE(4);
+  if (version !== 1) {
+    throw new Error(`unsupported frame version ${version}`);
+  }
+
+  const metaLen = packet.readUInt32LE(8);
+  const cellsLen = packet.readUInt32LE(12);
+  const potLen = packet.readUInt32LE(16);
+  const fldLen = packet.readUInt32LE(20);
+  const metaStart = FRAME_HEADER_SIZE;
+  const metaEnd = metaStart + metaLen;
+  const cellsEnd = metaEnd + cellsLen;
+  const potEnd = cellsEnd + potLen;
+  const fldEnd = potEnd + fldLen;
+
+  if (packet.length < fldEnd) {
+    throw new Error('short frame payload');
+  }
+
+  const meta = JSON.parse(packet.toString('utf8', metaStart, metaEnd));
+  return {
+    meta,
+    cells: packet.subarray(metaEnd, cellsEnd),
+    potential: packet.subarray(cellsEnd, potEnd),
+    field: packet.subarray(potEnd, fldEnd),
+  };
+}
+
+function getLatestParsedPacket() {
+  if (!latestPacket) return null;
+  if (latestParsedSource !== latestPacket) {
+    latestParsedPacket = parseFramePacket(latestPacket);
+    latestParsedSource = latestPacket;
+  }
+  return latestParsedPacket;
+}
 
 function startSim(code, dim, size) {
   if (simProcess) simProcess.kill();
@@ -41,21 +91,47 @@ function startSim(code, dim, size) {
   console.log(`Starting: ${bin} ${args.join(' ')}`);
   simProcess = spawn(bin, args, { stdio: ['pipe', 'pipe', 'inherit'] });
 
-  let buffer = '';
+  let buffer = Buffer.alloc(0);
   simProcess.stdout.on('data', (chunk) => {
-    buffer += chunk.toString();
-    let lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) continue;
+    buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+
+    while (buffer.length >= FRAME_HEADER_SIZE) {
+      const magicIndex = buffer.indexOf(FRAME_MAGIC);
+      if (magicIndex === -1) {
+        buffer = Buffer.alloc(0);
+        return;
+      }
+      if (magicIndex > 0) {
+        buffer = buffer.subarray(magicIndex);
+        if (buffer.length < FRAME_HEADER_SIZE) return;
+      }
+
+      const metaLen = buffer.readUInt32LE(8);
+      const cellsLen = buffer.readUInt32LE(12);
+      const potLen = buffer.readUInt32LE(16);
+      const fldLen = buffer.readUInt32LE(20);
+      const totalLen = FRAME_HEADER_SIZE + metaLen + cellsLen + potLen + fldLen;
+
+      if (totalLen > 64 * 1024 * 1024) {
+        buffer = buffer.subarray(4);
+        continue;
+      }
+      if (buffer.length < totalLen) return;
+
+      const packet = Buffer.from(buffer.subarray(0, totalLen));
+      buffer = buffer.subarray(totalLen);
+
       try {
-        latestFrame = JSON.parse(line);
-        const msg = line;
+        latestPacket = packet;
+        latestParsedPacket = null;
+        latestParsedSource = null;
         for (const ws of wsClients) {
-          if (ws.readyState === 1) ws.send(msg);
+          if (ws.readyState !== 1) continue;
+          if (ws.bufferedAmount > MAX_WS_BUFFERED_BYTES) continue;
+          ws.send(packet, { binary: true });
         }
       } catch (e) {
-        // skip non-JSON lines
+        console.log('Skipping malformed frame:', e.message);
       }
     }
   });
@@ -95,7 +171,7 @@ const httpServer = createServer((req, res) => {
   // API routes
   if (url.pathname === '/api/state') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(latestFrame || { gen: 0, mass: 0, running: false }));
+    res.end(JSON.stringify(getLatestParsedPacket()?.meta || { gen: 0, mass: 0, running: false }));
     return;
   }
 
@@ -184,10 +260,13 @@ const httpServer = createServer((req, res) => {
     req.on('end', () => {
       try {
         const { name } = JSON.parse(body);
-        const frame = latestFrame;
+        const parsed = getLatestParsedPacket();
+        const frame = parsed?.meta;
         if (!frame) { res.writeHead(400); res.end(JSON.stringify({error:'no frame'})); return; }
         const pattern = { name: name || 'unnamed', code: 'user_' + Date.now(),
-          params: frame.params, cells_b64: frame.cells_b64, width: frame.width, height: frame.height,
+          params: frame.params,
+          cells_b64: parsed?.cells ? parsed.cells.toString('base64') : null,
+          width: frame.width, height: frame.height,
           saved_at: new Date().toISOString(), mass: frame.mass };
         // Append to saved.json
         const savedPath = join(ROOT, 'saved_patterns.json');
@@ -280,7 +359,7 @@ wss.on('connection', (ws) => {
   });
 
   // Send current state immediately
-  if (latestFrame) ws.send(JSON.stringify(latestFrame));
+  if (latestPacket) ws.send(latestPacket, { binary: true });
 });
 
 httpServer.listen(PORT, () => {

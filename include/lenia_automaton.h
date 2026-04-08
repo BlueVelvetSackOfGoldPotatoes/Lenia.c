@@ -45,6 +45,7 @@ public:
 private:
     std::vector<int> shape_;
     int total_;
+    ComplexVec scratch_;
     void fft_along_axis(ComplexVec& data, int axis, bool inverse);
 };
 
@@ -104,6 +105,8 @@ private:
     std::vector<double> potential_;
     std::vector<double> field_;
     std::vector<double> field_old_;
+    std::vector<double> multistep_field_;
+    std::vector<double> next_cells_;
     bool has_field_old_ = false;
     std::vector<double> change_;
 

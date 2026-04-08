@@ -505,12 +505,15 @@ void LeniaApp::render_rgb(std::vector<uint8_t>& rgb_out, int& width, int& height
 
     double vmin = 0.0, vmax = 1.0;
     if (show_what != 0) {
-        vmin = *std::min_element(src_data->begin(), src_data->end());
-        vmax = *std::max_element(src_data->begin(), src_data->end());
+        auto [min_it, max_it] = std::minmax_element(src_data->begin(), src_data->end());
+        vmin = *min_it;
+        vmax = *max_it;
         if (vmax <= vmin) vmax = vmin + 1.0;
     }
 
     const auto& cmap = colormaps_[colormap_id_];
+    const size_t row_bytes = static_cast<size_t>(width) * 3;
+    std::vector<uint8_t> row_buffer(row_bytes);
 
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
@@ -519,19 +522,17 @@ void LeniaApp::render_rgb(std::vector<uint8_t>& rgb_out, int& width, int& height
             double nv = normalize(v, vmin, vmax);
             int ci = std::clamp(static_cast<int>(nv * 255.0), 0, 255);
             auto color = cmap.entries[ci];
-
-            for (int pr = 0; pr < px; ++pr) {
-                for (int pc = 0; pc < px; ++pc) {
-                    int oy = r * px + pr;
-                    int ox = c * px + pc;
-                    if (oy < height && ox < width) {
-                        int idx = (oy * width + ox) * 3;
-                        rgb_out[idx] = color.r;
-                        rgb_out[idx + 1] = color.g;
-                        rgb_out[idx + 2] = color.b;
-                    }
-                }
+            int x0 = c * px * 3;
+            for (int pc = 0; pc < px; ++pc) {
+                int idx = x0 + pc * 3;
+                row_buffer[idx] = color.r;
+                row_buffer[idx + 1] = color.g;
+                row_buffer[idx + 2] = color.b;
             }
+        }
+        for (int pr = 0; pr < px; ++pr) {
+            size_t dst = static_cast<size_t>(r * px + pr) * row_bytes;
+            std::memcpy(rgb_out.data() + dst, row_buffer.data(), row_bytes);
         }
     }
 }

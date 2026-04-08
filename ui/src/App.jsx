@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ScatterChart, Scatter } from 'recharts';
 
 const COLORMAPS = ['BCYR','Rainbow','GYPB','PPGG','BGYR','GYPB2','YPCG','W/B','B/W'];
 const KERNEL_NAMES = ['Polynomial','Exponential','Step','Life'];
 const GROWTH_NAMES = ['Polynomial','Gaussian','Step'];
+const FRAME_HEADER_BYTES = 24;
+const textDecoder = new TextDecoder();
 
 function useLeniaSocket() {
   const ws = useRef(null);
@@ -11,22 +13,70 @@ function useLeniaSocket() {
   const [connected, setConnected] = useState(false);
   const [history, setHistory] = useState([]);
   const hr = useRef([]);
+  const pendingMessage = useRef(null);
+  const rafId = useRef(0);
+  const reconnectTimer = useRef(0);
+  const lastHistoryCommit = useRef(0);
   useEffect(() => {
     const url = `ws://${window.location.hostname}:3100`;
+    const flushLatest = () => {
+      rafId.current = 0;
+      const payload = pendingMessage.current;
+      pendingMessage.current = null;
+      if (payload == null) return;
+
+      try {
+        const d = typeof payload === 'string' ? JSON.parse(payload) : parseBinaryFrame(payload);
+        if(!d || typeof d.gen!=='number')return;
+        setFrame(d);
+        hr.current.push({gen:d.gen,mass:d.mass,growth:d.growth||0,speed:d.speed||0,gyradius:d.gyradius||0});
+        if (hr.current.length > 300) hr.current.splice(0, hr.current.length - 300);
+
+        const now = performance.now();
+        if (now - lastHistoryCommit.current >= 100 || hr.current.length <= 2) {
+          lastHistoryCommit.current = now;
+          setHistory(hr.current.slice());
+        }
+      } catch(err){}
+
+      if (pendingMessage.current != null && rafId.current === 0) {
+        rafId.current = requestAnimationFrame(flushLatest);
+      }
+    };
+    const scheduleFlush = () => {
+      if (rafId.current === 0) {
+        rafId.current = requestAnimationFrame(flushLatest);
+      }
+    };
     const connect = () => {
       ws.current = new WebSocket(url);
+      ws.current.binaryType = 'arraybuffer';
       ws.current.onopen = () => setConnected(true);
       ws.current.onerror = () => {};
-      ws.current.onclose = () => { setConnected(false); setFrame(null); hr.current=[]; setHistory([]); setTimeout(connect,1500); };
+      ws.current.onclose = () => {
+        setConnected(false);
+        setFrame(null);
+        hr.current = [];
+        pendingMessage.current = null;
+        lastHistoryCommit.current = 0;
+        if (rafId.current !== 0) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = 0;
+        }
+        setHistory([]);
+        reconnectTimer.current = window.setTimeout(connect,1500);
+      };
       ws.current.onmessage = (e) => {
-        try { const d = JSON.parse(e.data); if(typeof d.gen!=='number')return; setFrame(d);
-          hr.current=[...hr.current.slice(-300),{gen:d.gen,mass:d.mass,growth:d.growth||0,speed:d.speed||0,gyradius:d.gyradius||0}];
-          setHistory(hr.current);
-        } catch(err){}
+        pendingMessage.current = e.data;
+        scheduleFlush();
       };
     };
     connect();
-    return () => { if(ws.current) ws.current.close(); };
+    return () => {
+      if (reconnectTimer.current) window.clearTimeout(reconnectTimer.current);
+      if (rafId.current !== 0) cancelAnimationFrame(rafId.current);
+      if(ws.current) ws.current.close();
+    };
   }, []);
   const send = useCallback((cmd) => { if(ws.current?.readyState===1) ws.current.send(cmd); }, []);
   return { frame, connected, history, send };
@@ -41,20 +91,77 @@ function colorize(v) {
 function hotmap(v){return [Math.min(255,v*3),Math.min(255,Math.max(0,(v-85)*3)),Math.min(255,Math.max(0,(v-170)*3))];}
 function coolmap(v){return [v<128?0:Math.floor((v-128)*2),Math.min(255,v),Math.min(255,255-Math.floor(v*0.3))];}
 
-function decodeB64(b64,w,h){if(!b64)return null;try{const r=atob(b64);if(r.length<w*h)return null;const a=new Uint8Array(w*h);for(let i=0;i<w*h;i++)a[i]=r.charCodeAt(i);return a;}catch(e){return null;}}
+function makePalette(mapper){
+  const palette = new Uint8ClampedArray(256 * 4);
+  for(let i=0;i<256;i++){
+    const [r,g,b] = mapper(i);
+    const o = i * 4;
+    palette[o] = r;
+    palette[o + 1] = g;
+    palette[o + 2] = b;
+    palette[o + 3] = 255;
+  }
+  return palette;
+}
 
-function CanvasPanel({data,w,h,cfn,label}){
+const MAIN_PALETTE = makePalette(colorize);
+const HOT_PALETTE = makePalette(hotmap);
+const COOL_PALETTE = makePalette(coolmap);
+
+function parseBinaryFrame(buffer){
+  if(!(buffer instanceof ArrayBuffer) || buffer.byteLength < FRAME_HEADER_BYTES) return null;
+  const view = new DataView(buffer);
+  if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) !== 'LFRM') return null;
+  if (view.getUint32(4, true) !== 1) return null;
+
+  const metaLen = view.getUint32(8, true);
+  const cellsLen = view.getUint32(12, true);
+  const potLen = view.getUint32(16, true);
+  const fldLen = view.getUint32(20, true);
+  const totalLen = FRAME_HEADER_BYTES + metaLen + cellsLen + potLen + fldLen;
+  if (buffer.byteLength < totalLen) return null;
+
+  const bytes = new Uint8Array(buffer);
+  const metaStart = FRAME_HEADER_BYTES;
+  const metaEnd = metaStart + metaLen;
+  const cellsEnd = metaEnd + cellsLen;
+  const potEnd = cellsEnd + potLen;
+  const fldEnd = potEnd + fldLen;
+
+  const meta = JSON.parse(textDecoder.decode(bytes.subarray(metaStart, metaEnd)));
+  meta.cells = bytes.subarray(metaEnd, cellsEnd);
+  meta.potential = bytes.subarray(cellsEnd, potEnd);
+  meta.field = bytes.subarray(potEnd, fldEnd);
+  return meta;
+}
+
+function CanvasPanel({data,w,h,palette=MAIN_PALETTE,label}){
   const canvasRef=useRef(null);
   const wrapRef=useRef(null);
+  const imageRef=useRef(null);
   const viewRef=useRef({zoom:1,px:0,py:0,drag:false,lx:0,ly:0});
 
   useEffect(()=>{
     if(!canvasRef.current||!data)return;
-    const c=canvasRef.current;c.width=w;c.height=h;
-    const ctx=c.getContext('2d');const img=ctx.createImageData(w,h);
-    for(let i=0;i<w*h;i++){const[r,g,b]=(cfn||colorize)(data[i]);img.data[i*4]=r;img.data[i*4+1]=g;img.data[i*4+2]=b;img.data[i*4+3]=255;}
+    const c=canvasRef.current;
+    if(c.width!==w)c.width=w;
+    if(c.height!==h)c.height=h;
+    const ctx=c.getContext('2d');
+    let img=imageRef.current;
+    if(!img || img.width!==w || img.height!==h){
+      img=ctx.createImageData(w,h);
+      imageRef.current=img;
+    }
+    const pixels=img.data;
+    for(let i=0, p=0;i<w*h;i++,p+=4){
+      const ci=data[i]*4;
+      pixels[p]=palette[ci];
+      pixels[p+1]=palette[ci+1];
+      pixels[p+2]=palette[ci+2];
+      pixels[p+3]=255;
+    }
     ctx.putImageData(img,0,0);
-  },[data,w,h,cfn]);
+  },[data,w,h,palette]);
 
   // Attach native event listeners for zoom/pan (avoids React passive wheel issue)
   useEffect(()=>{
@@ -122,6 +229,53 @@ function PS({label,value,min,max,step,onChange,title}){
     <span className="param-value">{typeof value==='number'?value.toFixed(step<0.01?4:step<1?3:0):value}</span></div>;
 }
 
+const LibraryPanel = memo(function LibraryPanel({
+  animals,
+  saved,
+  libTab,
+  setLibTab,
+  sel,
+  setSel,
+  flt,
+  setFlt,
+  saveName,
+  setSaveName,
+  setSaved,
+  send,
+}){
+  const filteredAnimals = animals.filter(a =>
+    a.name.toLowerCase().includes(flt.toLowerCase()) ||
+    a.code.toLowerCase().includes(flt.toLowerCase())
+  );
+
+  return <div className="panel">
+    <div style={{display:'flex',gap:2,marginBottom:4}}>
+      <button className={`btn ${libTab==='animals'?'active':''}`} style={{flex:1,fontSize:10}} onClick={()=>setLibTab('animals')}>Library ({filteredAnimals.length})</button>
+      <button className={`btn ${libTab==='saved'?'active':''}`} style={{flex:1,fontSize:10}} onClick={()=>setLibTab('saved')}>Saved ({saved.length})</button>
+    </div>
+    {libTab==='animals' ? <>
+      <input type="text" id="af" name="af" placeholder="Search..." value={flt} onChange={e=>setFlt(e.target.value)} style={{width:'100%',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11,marginBottom:3}}/>
+      <div className="animal-list">
+        {filteredAnimals.slice(0,60).map(a=><div key={a.code} className={`animal-item ${sel===a.code?'active':''}`} onClick={()=>{setSel(a.code);send(`load ${a.code}`);}}><b>{a.code}</b> {a.name}</div>)}
+      </div>
+    </> : <>
+      <div style={{display:'flex',gap:3,marginBottom:4}}>
+        <input type="text" id="save-name" name="save-name" placeholder="Pattern name..." value={saveName} onChange={e=>setSaveName(e.target.value)} style={{flex:1,background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11}}/>
+        <button className="btn" title="Save current organism state with this name" onClick={()=>{
+          fetch('/api/save-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:saveName||'unnamed'})})
+            .then(r=>r.json()).then(()=>{fetch('/api/saved-patterns').then(r=>r.json()).then(setSaved);setSaveName('');}).catch(()=>{});
+        }}>💾 Save</button>
+      </div>
+      <div className="animal-list">
+        {saved.map((s,i)=><div key={i} className="animal-item" title={`Saved ${s.saved_at}\nmass=${s.mass?.toFixed(1)} R=${s.params?.R} m=${s.params?.m}`} onClick={()=>{
+          fetch('/api/load-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params})}).catch(()=>{});
+        }}><b>{s.name}</b> <span style={{color:'var(--text-dim)',fontSize:10}}>m={s.mass?.toFixed(0)} R={s.params?.R}</span></div>)}
+        {saved.length===0 && <div style={{padding:8,color:'var(--text-dim)',fontSize:11,textAlign:'center'}}>No saved patterns yet. Enter a name above and click Save.</div>}
+      </div>
+    </>}
+  </div>;
+});
+
 export default function App() {
   const {frame,connected,history,send}=useLeniaSocket();
   const [animals,setAnimals]=useState([]);
@@ -145,10 +299,10 @@ export default function App() {
 
   const p=frame?.params||{R:13,T:10,m:0.15,s:0.015,kn:1,gn:1,b:[1]};
   const w=frame?.width||128,h=frame?.height||128;
-  const cells=frame?decodeB64(frame.cells_b64,w,h):null;
-  const pot=frame?decodeB64(frame.potential_b64,w,h):null;
-  const fld=frame?decodeB64(frame.field_b64,w,h):null;
-  const fa=animals.filter(a=>a.name.toLowerCase().includes(flt.toLowerCase())||a.code.toLowerCase().includes(flt.toLowerCase()));
+  const cells=frame?.cells||null;
+  const pot=frame?.potential||null;
+  const fld=frame?.field||null;
+  const recentHistory = history.length > 150 ? history.slice(-150) : history;
 
   return (
     <div className="app">
@@ -201,32 +355,20 @@ export default function App() {
             <button className="btn" onClick={()=>send('search_stop')}>Stop</button>
           </div>
         </div>
-        <div className="panel">
-          <div style={{display:'flex',gap:2,marginBottom:4}}>
-            <button className={`btn ${libTab==='animals'?'active':''}`} style={{flex:1,fontSize:10}} onClick={()=>setLibTab('animals')}>Library ({fa.length})</button>
-            <button className={`btn ${libTab==='saved'?'active':''}`} style={{flex:1,fontSize:10}} onClick={()=>setLibTab('saved')}>Saved ({saved.length})</button>
-          </div>
-          {libTab==='animals' ? <>
-            <input type="text" id="af" name="af" placeholder="Search..." value={flt} onChange={e=>setFlt(e.target.value)} style={{width:'100%',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11,marginBottom:3}}/>
-            <div className="animal-list">
-              {fa.slice(0,60).map(a=><div key={a.code} className={`animal-item ${sel===a.code?'active':''}`} onClick={()=>{setSel(a.code);send(`load ${a.code}`);}}><b>{a.code}</b> {a.name}</div>)}
-            </div>
-          </> : <>
-            <div style={{display:'flex',gap:3,marginBottom:4}}>
-              <input type="text" id="save-name" name="save-name" placeholder="Pattern name..." value={saveName} onChange={e=>setSaveName(e.target.value)} style={{flex:1,background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'3px 6px',borderRadius:3,fontSize:11}}/>
-              <button className="btn" title="Save current organism state with this name" onClick={()=>{
-                fetch('/api/save-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:saveName||'unnamed'})})
-                  .then(r=>r.json()).then(()=>{fetch('/api/saved-patterns').then(r=>r.json()).then(setSaved);setSaveName('');}).catch(()=>{});
-              }}>💾 Save</button>
-            </div>
-            <div className="animal-list">
-              {saved.map((s,i)=><div key={i} className="animal-item" title={`Saved ${s.saved_at}\nmass=${s.mass?.toFixed(1)} R=${s.params?.R} m=${s.params?.m}`} onClick={()=>{
-                fetch('/api/load-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params})}).catch(()=>{});
-              }}><b>{s.name}</b> <span style={{color:'var(--text-dim)',fontSize:10}}>m={s.mass?.toFixed(0)} R={s.params?.R}</span></div>)}
-              {saved.length===0 && <div style={{padding:8,color:'var(--text-dim)',fontSize:11,textAlign:'center'}}>No saved patterns yet. Enter a name above and click Save.</div>}
-            </div>
-          </>}
-        </div>
+        <LibraryPanel
+          animals={animals}
+          saved={saved}
+          libTab={libTab}
+          setLibTab={setLibTab}
+          sel={sel}
+          setSel={setSel}
+          flt={flt}
+          setFlt={setFlt}
+          saveName={saveName}
+          setSaveName={setSaveName}
+          setSaved={setSaved}
+          send={send}
+        />
       </div>
 
       {/* VIEWPORT */}
@@ -240,8 +382,8 @@ export default function App() {
             </div>
             {/* Bottom strip — 35%: growth + potential + phase */}
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <CanvasPanel data={fld} w={w} h={h} palette={HOT_PALETTE} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} palette={COOL_PALETTE} label="Potential k∗f"/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -250,7 +392,7 @@ export default function App() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#30363d"/>
                       <XAxis dataKey="mass" stroke="#8b949e" tick={{fontSize:8}} label={{value:'m',position:'bottom',fontSize:8,fill:'#8b949e'}}/>
                       <YAxis dataKey="growth" stroke="#8b949e" tick={{fontSize:8}} label={{value:'g',angle:-90,position:'left',fontSize:8,fill:'#8b949e'}}/>
-                      <Scatter data={history.slice(-150)} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
+                      <Scatter data={recentHistory} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
@@ -264,8 +406,8 @@ export default function App() {
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <CanvasPanel data={fld} w={w} h={h} palette={HOT_PALETTE} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} palette={COOL_PALETTE} label="Potential k∗f"/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -274,7 +416,7 @@ export default function App() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#30363d"/>
                       <XAxis dataKey="mass" stroke="#8b949e" tick={{fontSize:8}}/>
                       <YAxis dataKey="growth" stroke="#8b949e" tick={{fontSize:8}}/>
-                      <Scatter data={history.slice(-150)} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
+                      <Scatter data={recentHistory} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
@@ -288,8 +430,8 @@ export default function App() {
               <div className="overlay-info">gen={frame?.gen||0} mass={( frame?.mass||0).toFixed(1)} {wasd?'[WASD]':''}</div>
             </div>
             <div style={{flex:3,display:'flex',gap:1,background:'var(--border)',minHeight:0}}>
-              <CanvasPanel data={fld} w={w} h={h} cfn={hotmap} label="Growth δ(k∗f)"/>
-              <CanvasPanel data={pot} w={w} h={h} cfn={coolmap} label="Potential k∗f"/>
+              <CanvasPanel data={fld} w={w} h={h} palette={HOT_PALETTE} label="Growth δ(k∗f)"/>
+              <CanvasPanel data={pot} w={w} h={h} palette={COOL_PALETTE} label="Potential k∗f"/>
               <div style={{flex:1,background:'#000',minWidth:0,display:'flex',flexDirection:'column'}}>
                 <div style={{fontSize:9,color:'#8b949e',padding:'2px 4px',textAlign:'center'}}>Phase (mass vs growth)</div>
                 <div style={{flex:1,minHeight:0}}>
@@ -298,7 +440,7 @@ export default function App() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#30363d"/>
                       <XAxis dataKey="mass" stroke="#8b949e" tick={{fontSize:8}}/>
                       <YAxis dataKey="growth" stroke="#8b949e" tick={{fontSize:8}}/>
-                      <Scatter data={history.slice(-150)} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
+                      <Scatter data={recentHistory} fill="#0c8599" fillOpacity={0.5} r={1.5}/>
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>

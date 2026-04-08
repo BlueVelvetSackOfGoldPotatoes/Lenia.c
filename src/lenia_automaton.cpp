@@ -152,9 +152,9 @@ void FFTND::forward(const std::vector<double>& real_in, ComplexVec& complex_out)
 
     // Use FFTW for 2D if available
     if (ndim() == 2 && g_fftw.available()) {
-        ComplexVec result;
-        g_fftw.forward_2d(shape_[0], shape_[1], complex_out, result);
-        complex_out = std::move(result);
+        scratch_.resize(total_);
+        g_fftw.forward_2d(shape_[0], shape_[1], complex_out, scratch_);
+        complex_out.swap(scratch_);
         return;
     }
 
@@ -166,10 +166,10 @@ void FFTND::forward(const std::vector<double>& real_in, ComplexVec& complex_out)
 void FFTND::inverse(const ComplexVec& complex_in, std::vector<double>& real_out) {
     // Use FFTW for 2D if available
     if (ndim() == 2 && g_fftw.available()) {
-        ComplexVec result;
-        g_fftw.inverse_2d(shape_[0], shape_[1], complex_in, result);
+        scratch_.resize(total_);
+        g_fftw.inverse_2d(shape_[0], shape_[1], complex_in, scratch_);
         real_out.resize(total_);
-        for (int i = 0; i < total_; ++i) real_out[i] = result[i].real();
+        for (int i = 0; i < total_; ++i) real_out[i] = scratch_[i].real();
         return;
     }
 
@@ -184,8 +184,27 @@ void FFTND::inverse(const ComplexVec& complex_in, std::vector<double>& real_out)
 void fftshift_nd(std::vector<double>& arr, const std::vector<int>& shape) {
     int total = 1;
     for (int s : shape) total *= s;
-    std::vector<double> temp(total);
+    static thread_local std::vector<double> temp;
+    temp.resize(total);
     int ndim = static_cast<int>(shape.size());
+
+    if (ndim == 2) {
+        const int rows = shape[0];
+        const int cols = shape[1];
+        const int row_shift = rows / 2;
+        const int col_shift = cols / 2;
+
+        for (int r = 0; r < rows; ++r) {
+            const int src_r = (r + row_shift) % rows;
+            const double* src_row = arr.data() + src_r * cols;
+            double* dst_row = temp.data() + r * cols;
+            std::copy_n(src_row + col_shift, cols - col_shift, dst_row);
+            std::copy_n(src_row, col_shift, dst_row + (cols - col_shift));
+        }
+
+        arr.swap(temp);
+        return;
+    }
 
     for (int flat = 0; flat < total; ++flat) {
         // Decompose flat index into n-D coords
@@ -201,7 +220,7 @@ void fftshift_nd(std::vector<double>& arr, const std::vector<int>& shape) {
         }
         temp[dst] = arr[flat];
     }
-    arr = std::move(temp);
+    arr.swap(temp);
 }
 
 void fftshift2d(std::vector<double>& arr, int rows, int cols) {
@@ -221,6 +240,9 @@ Automaton::Automaton(Board& world) : world_(world) {
     potential_fft_.resize(n);
     potential_.resize(n, 0.0);
     field_.resize(n, 0.0);
+    field_old_.resize(n, 0.0);
+    multistep_field_.resize(n, 0.0);
+    next_cells_.resize(n, 0.0);
     change_.resize(n, 0.0);
 
     // Build coordinate grids: X[dim] = (coord - mid) for each dimension
@@ -317,9 +339,11 @@ void Automaton::calc_once(bool is_update) {
     int gn = world_.params.gn - 1;  // 0-indexed
     double m = world_.params.m;
     double s = world_.params.s;
+    auto& cells = world_.cells.data();
+    auto& next = next_cells_;
 
     // FFT of world
-    fft_->forward(world_.cells.data(), world_fft_);
+    fft_->forward(cells, world_fft_);
 
     // Convolution in frequency domain
     for (int i = 0; i < n; ++i) {
@@ -332,32 +356,100 @@ void Automaton::calc_once(bool is_update) {
     // FFTshift the potential (matching Python: self.fftshift(np.real(self.ifftn(...))))
     fftshift_nd(potential_, world_.cells.shape());
 
-    // Apply growth function
-    for (int i = 0; i < n; ++i) {
-        field_[i] = growth_func(gn, potential_[i], m, s);
+    // Apply growth function with the step's fixed parameters.
+    switch (gn) {
+        case 0: {
+            const double inv_9s2 = 1.0 / (9.0 * s * s);
+            for (int i = 0; i < n; ++i) {
+                const double diff = potential_[i] - m;
+                const double t = 1.0 - diff * diff * inv_9s2;
+                if (t <= 0.0) {
+                    field_[i] = -1.0;
+                } else {
+                    const double t2 = t * t;
+                    field_[i] = 2.0 * t2 * t2 - 1.0;
+                }
+            }
+            break;
+        }
+        case 2:
+            for (int i = 0; i < n; ++i) {
+                field_[i] = (std::abs(potential_[i] - m) <= s) ? 1.0 : -1.0;
+            }
+            break;
+        case 1:
+        default: {
+            const double inv_2s2 = 1.0 / (2.0 * s * s);
+            for (int i = 0; i < n; ++i) {
+                const double diff = potential_[i] - m;
+                field_[i] = std::exp(-(diff * diff) * inv_2s2) * 2.0 - 1.0;
+            }
+            break;
+        }
     }
 
     // Multi-step Adams-Bashforth (if enabled)
-    std::vector<double>* D_ptr = &field_;
-    std::vector<double> D_multistep;
+    const std::vector<double>* D_ptr = &field_;
     if (is_multi_step && has_field_old_) {
-        D_multistep.resize(n);
         for (int i = 0; i < n; ++i) {
-            D_multistep[i] = 0.5 * (3.0 * field_[i] - field_old_[i]);
+            multistep_field_[i] = 0.5 * (3.0 * field_[i] - field_old_[i]);
         }
-        field_old_ = field_;
-        D_ptr = &D_multistep;
+        std::copy(field_.begin(), field_.end(), field_old_.begin());
+        D_ptr = &multistep_field_;
     } else if (is_multi_step) {
-        field_old_ = field_;
+        std::copy(field_.begin(), field_.end(), field_old_.begin());
         has_field_old_ = true;
     }
 
     // Update: A_new = A + dt * D + dt * (vx * dA/dx + vy * dA/dy)
-    auto& cells = world_.cells.data();
-    std::vector<double> A_new(n);
+    const bool has_convection = (std::abs(convection_vx) > 1e-6 || std::abs(convection_vy) > 1e-6)
+                                && world_.cells.ndim() == 2;
+    const bool has_noise = add_noise > 0.0;
+    const bool has_quantization = world_.param_P > 0;
+    const bool direct_update = is_update && mask_rate <= 0.0 && !has_convection;
+    const double P = static_cast<double>(world_.param_P);
 
-    bool has_convection = (std::abs(convection_vx) > 1e-6 || std::abs(convection_vy) > 1e-6)
-                          && world_.cells.ndim() == 2;
+    std::mt19937 noise_rng;
+    std::uniform_real_distribution<double> noise_dist(-0.5, 0.5);
+    if (has_noise) {
+        noise_rng = std::mt19937(gen_);
+    }
+
+    if (direct_update) {
+        const auto& delta = *D_ptr;
+        if (!has_noise && !is_soft_clip && !has_quantization) {
+            for (int i = 0; i < n; ++i) {
+                const double old_value = cells[i];
+                const double new_value = std::clamp(old_value + dt * delta[i], 0.0, 1.0);
+                change_[i] = (new_value - old_value) / dt;
+                cells[i] = new_value;
+            }
+        } else {
+            for (int i = 0; i < n; ++i) {
+                const double old_value = cells[i];
+                double new_value = old_value + dt * delta[i];
+                if (has_noise) {
+                    const double rand_factor = noise_dist(noise_rng) * (add_noise / 10.0) + 1.0;
+                    new_value *= rand_factor;
+                }
+                if (is_soft_clip) {
+                    new_value = lenia::soft_clip(new_value, 0.0, 1.0, 1.0 / dt);
+                } else {
+                    new_value = std::clamp(new_value, 0.0, 1.0);
+                }
+                if (has_quantization) {
+                    new_value = std::round(new_value * P) / P;
+                }
+                change_[i] = (new_value - old_value) / dt;
+                cells[i] = new_value;
+            }
+        }
+
+        gen_++;
+        // Round time to avoid floating point drift
+        time_ = std::round((time_ + dt) * 1e10) / 1e10;
+        return;
+    }
 
     if (has_convection) {
         int rows = world_.cells.shape(0);
@@ -373,47 +465,42 @@ void Automaton::calc_once(bool is_update) {
                 double dAdx = (cells[cp] - cells[cm]) * 0.5;
                 double dAdy = (cells[rp] - cells[rm]) * 0.5;
                 double convection = convection_vx * dAdx + convection_vy * dAdy;
-                A_new[i] = cells[i] + dt * (*D_ptr)[i] - dt * convection;
+                next[i] = cells[i] + dt * (*D_ptr)[i] - dt * convection;
             }
         }
     } else {
+        const auto& delta = *D_ptr;
         for (int i = 0; i < n; ++i) {
-            A_new[i] = cells[i] + dt * (*D_ptr)[i];
+            next[i] = cells[i] + dt * delta[i];
         }
     }
 
-    // Add noise (if enabled)
-    if (add_noise > 0.0) {
-        std::mt19937 rng(gen_);
-        std::uniform_real_distribution<double> dist(-0.5, 0.5);
+    if (!has_noise && !is_soft_clip && !has_quantization) {
         for (int i = 0; i < n; ++i) {
-            double rand_factor = dist(rng) * (add_noise / 10.0) + 1.0;
-            A_new[i] *= rand_factor;
-        }
-    }
-
-    // Clip or soft-clip
-    if (is_soft_clip) {
-        for (int i = 0; i < n; ++i) {
-            A_new[i] = lenia::soft_clip(A_new[i], 0.0, 1.0, 1.0 / dt);
+            const double old_value = cells[i];
+            const double new_value = std::clamp(next[i], 0.0, 1.0);
+            next[i] = new_value;
+            change_[i] = (new_value - old_value) / dt;
         }
     } else {
         for (int i = 0; i < n; ++i) {
-            A_new[i] = std::clamp(A_new[i], 0.0, 1.0);
+            const double old_value = cells[i];
+            double new_value = next[i];
+            if (has_noise) {
+                const double rand_factor = noise_dist(noise_rng) * (add_noise / 10.0) + 1.0;
+                new_value *= rand_factor;
+            }
+            if (is_soft_clip) {
+                new_value = lenia::soft_clip(new_value, 0.0, 1.0, 1.0 / dt);
+            } else {
+                new_value = std::clamp(new_value, 0.0, 1.0);
+            }
+            if (has_quantization) {
+                new_value = std::round(new_value * P) / P;
+            }
+            next[i] = new_value;
+            change_[i] = (new_value - old_value) / dt;
         }
-    }
-
-    // Quantization (if param_P > 0)
-    if (world_.param_P > 0) {
-        double P = static_cast<double>(world_.param_P);
-        for (int i = 0; i < n; ++i) {
-            A_new[i] = std::round(A_new[i] * P) / P;
-        }
-    }
-
-    // Compute change rate
-    for (int i = 0; i < n; ++i) {
-        change_[i] = (A_new[i] - cells[i]) / dt;
     }
 
     // Apply update
@@ -423,11 +510,11 @@ void Automaton::calc_once(bool is_update) {
             std::uniform_real_distribution<double> dist(0.0, 1.0);
             for (int i = 0; i < n; ++i) {
                 if (dist(rng) > (mask_rate / 10.0)) {
-                    cells[i] = A_new[i];
+                    cells[i] = next[i];
                 }
             }
         } else {
-            cells = A_new;
+            cells.swap(next);
         }
         gen_++;
         // Round time to avoid floating point drift
