@@ -282,9 +282,27 @@ function App() {
               {GROWTH_NAMES.map((n, i) => <option key={i} value={i + 1}>{n}</option>)}
             </select>
           </div>
-          <div className="param-row">
+          <div className="param-row" title="Birth weights: ring amplitudes for the kernel. Controls concentric ring structure.">
             <span className="param-label">b</span>
             <span className="param-value">[{(params.b || [1]).map(v => v.toFixed(2)).join(', ')}]</span>
+          </div>
+          <div className="param-row" title="Grid size (NxN). Larger = bigger organisms but slower. Changing restarts the simulation.">
+            <span className="param-label">Grid</span>
+            <select id="param-grid" name="param-grid" value={frame?.width || 128}
+                    onChange={e => {
+                      fetch('/api/resize', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ size: parseInt(e.target.value), code: frame?.code || '' })
+                      }).catch(() => {});
+                    }}
+                    style={{ flex: 1, margin: '0 8px', background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', padding: '2px', borderRadius: 3 }}>
+              <option value="32">32x32</option>
+              <option value="64">64x64</option>
+              <option value="128">128x128</option>
+              <option value="256">256x256</option>
+              <option value="512">512x512</option>
+            </select>
           </div>
         </div>
 

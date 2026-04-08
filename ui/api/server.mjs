@@ -21,14 +21,17 @@ let simProcess = null;
 let latestFrame = null;
 let wsClients = new Set();
 
-function startSim(code, dim) {
+let currentSize = SIM_SIZE;
+
+function startSim(code, dim, size) {
   if (simProcess) simProcess.kill();
   if (dim) SIM_DIM = dim;
+  if (size) currentSize = size;
 
   const animalsFile = SIM_DIM === 3
     ? join(LENIA_PY_DIR, 'animals3D.json')
     : ANIMALS;
-  const simSize = SIM_DIM === 3 ? Math.min(SIM_SIZE, 64) : SIM_SIZE;  // 3D needs smaller size
+  const simSize = SIM_DIM === 3 ? Math.min(currentSize, 64) : currentSize;  // 3D needs smaller size
 
   const args = ['--size', String(simSize), '--fps', String(SIM_FPS), '--dim', String(SIM_DIM)];
   if (existsSync(animalsFile)) args.push('--animals', animalsFile);
@@ -99,6 +102,25 @@ const httpServer = createServer((req, res) => {
   if (url.pathname === '/api/animals') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(animalsList));
+    return;
+  }
+
+  if (url.pathname === '/api/resize' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { size, code } = JSON.parse(body);
+        const newSize = Math.max(32, Math.min(512, parseInt(size)));
+        // Restart sim with new size
+        startSim(code || null, SIM_DIM, newSize);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, size: newSize }));
+      } catch (e) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
