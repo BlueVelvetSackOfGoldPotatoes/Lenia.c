@@ -137,13 +137,18 @@ int main(int argc, char* argv[]) {
                 else if (line == "search_down") { app.toggle_search(-1); }
                 else if (line == "search_stop") { app.stop_search(); }
                 else if (line.substr(0, 5) == "stim ") {
-                    // Move organism by rolling the grid 1px in the given direction.
-                    // Toroidal wrap means the organism is perfectly preserved.
+                    // Set convection velocity: adds v·∇A to the Lenia equation.
+                    // The organism is smoothly transported while staying alive.
                     std::istringstream ss(line.substr(5));
-                    int dx = 0, dy = 0;
+                    double dx = 0, dy = 0;
                     ss >> dx >> dy;
-                    app.tx().shift = {dy, dx};
-                    app.transform_world();
+                    double speed = 3.0;  // convection strength
+                    app.automaton().convection_vx = dx * speed;
+                    app.automaton().convection_vy = dy * speed;
+                }
+                else if (line == "stim_stop") {
+                    app.automaton().convection_vx = 0;
+                    app.automaton().convection_vy = 0;
                 }
             }
         } else if (nread == 0) {

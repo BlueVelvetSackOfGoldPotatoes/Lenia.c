@@ -9,17 +9,30 @@
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
   <script>
-    // Global WASD handler — runs outside React, guaranteed to work
+    // Global WASD handler — sets convection velocity while key is held
     window.__leniaWASD = false;
+    var activeKeys = {};
+    function sendStim() {
+      var dx = 0, dy = 0;
+      if (activeKeys['a']) dx -= 1;
+      if (activeKeys['d']) dx += 1;
+      if (activeKeys['w']) dy -= 1;
+      if (activeKeys['s']) dy += 1;
+      var cmd = (dx === 0 && dy === 0) ? 'stim_stop' : ('stim ' + dx + ' ' + dy);
+      fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+    }
     window.addEventListener('keydown', function(e) {
       if (!window.__leniaWASD) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-      var cmds = {w:'stim 0 -1', s:'stim 0 1', a:'stim -1 0', d:'stim 1 0'};
-      var cmd = cmds[e.key.toLowerCase()];
-      if (cmd) {
+      var k = e.key.toLowerCase();
+      if ('wasd'.indexOf(k) >= 0) {
         e.preventDefault();
-        fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+        if (!activeKeys[k]) { activeKeys[k] = true; sendStim(); }
       }
+    });
+    window.addEventListener('keyup', function(e) {
+      var k = e.key.toLowerCase();
+      if (activeKeys[k]) { delete activeKeys[k]; sendStim(); }
     });
   </script>
 </body>

@@ -352,11 +352,34 @@ void Automaton::calc_once(bool is_update) {
         has_field_old_ = true;
     }
 
-    // Update: A_new = A + dt * D
+    // Update: A_new = A + dt * D + dt * (vx * dA/dx + vy * dA/dy)
     auto& cells = world_.cells.data();
     std::vector<double> A_new(n);
-    for (int i = 0; i < n; ++i) {
-        A_new[i] = cells[i] + dt * (*D_ptr)[i];
+
+    bool has_convection = (std::abs(convection_vx) > 1e-6 || std::abs(convection_vy) > 1e-6)
+                          && world_.cells.ndim() == 2;
+
+    if (has_convection) {
+        int rows = world_.cells.shape(0);
+        int cols = world_.cells.shape(1);
+        for (int r = 0; r < rows; ++r) {
+            for (int c = 0; c < cols; ++c) {
+                int i = r * cols + c;
+                // Central difference gradients with wrapping
+                int rp = ((r + 1) % rows) * cols + c;
+                int rm = ((r - 1 + rows) % rows) * cols + c;
+                int cp = r * cols + ((c + 1) % cols);
+                int cm = r * cols + ((c - 1 + cols) % cols);
+                double dAdx = (cells[cp] - cells[cm]) * 0.5;
+                double dAdy = (cells[rp] - cells[rm]) * 0.5;
+                double convection = convection_vx * dAdx + convection_vy * dAdy;
+                A_new[i] = cells[i] + dt * (*D_ptr)[i] - dt * convection;
+            }
+        }
+    } else {
+        for (int i = 0; i < n; ++i) {
+            A_new[i] = cells[i] + dt * (*D_ptr)[i];
+        }
     }
 
     // Add noise (if enabled)

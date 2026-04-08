@@ -86,6 +86,11 @@ public:
     double mask_rate = 0.0;
     double add_noise = 0.0;
 
+    /// Convection velocity: adds v·∇A to the update rule for WASD steering.
+    /// The organism is transported while staying alive.
+    double convection_vx = 0.0;
+    double convection_vy = 0.0;
+
 private:
     Board& world_;
     std::unique_ptr<FFT2D> fft_;
