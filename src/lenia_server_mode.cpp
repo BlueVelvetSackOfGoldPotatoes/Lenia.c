@@ -142,7 +142,7 @@ int main(int argc, char* argv[]) {
                     std::istringstream ss(line.substr(5));
                     double dx = 0, dy = 0;
                     ss >> dx >> dy;
-                    double speed = 3.0;  // convection strength
+                    double speed = 8.0;  // convection strength (visible at 128x128)
                     app.automaton().convection_vx = dx * speed;
                     app.automaton().convection_vy = dy * speed;
                 }

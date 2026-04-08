@@ -139,7 +139,13 @@ export default function App() {
           <span style={{width:1,background:'var(--border)',height:20}}/>
           {['quad','2d','3d'].map(m=><button key={m} className={`btn ${view===m?'active':''}`} onClick={()=>setView(m)}>{m.toUpperCase()}</button>)}
           <span style={{width:1,background:'var(--border)',height:20}}/>
-          <button className={`btn ${wasd?'active':''}`} title="WASD: move the organism around. Press to toggle, then use W/A/S/D keys. Click anywhere outside input fields first." onClick={(e)=>{setWasd(w=>!w);e.target.blur();}}>WASD{wasd?' ●':''}</button>
+          <button className={`btn ${wasd?'active':''}`} title={"WASD Steering — adds a convection (wind) term to the Lenia equation: A' = A + dt·G(K*A) - dt·(v·∇A). " +
+            "When you hold a key, a velocity field is applied across the entire grid. This computes the spatial gradient ∇A of the cell values " +
+            "and subtracts v·∇A, which physically transports all cell material in the pressed direction. " +
+            "The organism stays alive because the growth function G(K*A) keeps running — it heals itself as it moves. " +
+            "This is equivalent to the organism swimming through a flowing medium. " +
+            "Release the key and the flow stops — the organism continues under its own dynamics. " +
+            "W=up A=left S=down D=right. Hold two keys for diagonal flow."} onClick={(e)=>{setWasd(w=>!w);e.target.blur();}}>WASD{wasd?' ●':''}</button>
         </div>
         <span style={{marginLeft:'auto',fontSize:10,color:'var(--text-dim)',fontFamily:'monospace'}}>
           gen {frame?.gen||0} | m={( frame?.mass||0).toFixed(1)} | {frame?.name||''}
