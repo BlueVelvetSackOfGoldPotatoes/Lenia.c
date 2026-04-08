@@ -137,51 +137,13 @@ int main(int argc, char* argv[]) {
                 else if (line == "search_down") { app.toggle_search(-1); }
                 else if (line == "search_stop") { app.stop_search(); }
                 else if (line.substr(0, 5) == "stim ") {
-                    // Steering: asymmetric nudge of the organism.
-                    // Slightly boost cells on the front side, slightly dampen on the back.
-                    // This creates differential growth that steers the organism without
-                    // creating a separate blob or killing it.
+                    // Move organism by rolling the grid 1px in the given direction.
+                    // Toroidal wrap means the organism is perfectly preserved.
                     std::istringstream ss(line.substr(5));
                     int dx = 0, dy = 0;
                     ss >> dx >> dy;
-                    if (app.world().cells.ndim() == 2) {
-                        int rows = app.world().cells.shape(0);
-                        int cols = app.world().cells.shape(1);
-                        auto& cells = app.world().cells.data();
-                        // Find center of mass
-                        double cx = 0, cy = 0, total = 0;
-                        for (int r = 0; r < rows; ++r)
-                            for (int c = 0; c < cols; ++c) {
-                                double v = cells[r * cols + c];
-                                cx += v * c; cy += v * r; total += v;
-                            }
-                        if (total > 0.1) {
-                            cx /= total; cy /= total;
-                            // For each cell with value > 0, compute how much it's
-                            // "in front" vs "behind" the desired direction.
-                            // Front cells get a tiny boost, back cells get a tiny dampen.
-                            double strength = 0.03; // very gentle
-                            double dir_len = std::sqrt(dx*dx + dy*dy);
-                            if (dir_len < 0.1) dir_len = 1.0;
-                            double ndx = dx / dir_len, ndy = dy / dir_len;
-                            for (int r = 0; r < rows; ++r) {
-                                for (int c = 0; c < cols; ++c) {
-                                    double v = cells[r * cols + c];
-                                    if (v < 0.01) continue;
-                                    // Signed distance along direction from center
-                                    double dr = r - cy, dc = c - cx;
-                                    double proj = dc * ndx + dr * ndy; // positive = front
-                                    // Normalize by organism radius
-                                    double dist = std::sqrt(dr*dr + dc*dc);
-                                    if (dist < 1) continue;
-                                    double norm_proj = proj / dist; // [-1, 1]
-                                    // Front: boost. Back: dampen.
-                                    double delta = strength * norm_proj * v;
-                                    cells[r * cols + c] = std::clamp(v + delta, 0.0, 1.0);
-                                }
-                            }
-                        }
-                    }
+                    app.tx().shift = {dy, dx};
+                    app.transform_world();
                 }
             }
         } else if (nread == 0) {
