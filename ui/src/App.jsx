@@ -108,23 +108,24 @@ export default function App() {
   const [wasd,setWasd]=useState(false);
 
   useEffect(()=>{fetch('/api/animals').then(r=>r.json()).then(setAnimals).catch(()=>{});},[]);
+  // WASD: always listen, but only act when wasd mode is on AND not typing in an input
   useEffect(()=>{
-    if(!wasd)return;
-    const sendCmd = (cmd) => {
-      // Use both WebSocket and HTTP to ensure delivery
-      send(cmd);
-      fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})}).catch(()=>{});
-    };
     const down = (e) => {
+      // Skip if typing in an input/select
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+      if (!wasd) return;
       const k = e.key.toLowerCase();
-      if (k==='w') { e.preventDefault(); sendCmd('stim 0 -1'); }
-      else if (k==='s') { e.preventDefault(); sendCmd('stim 0 1'); }
-      else if (k==='a') { e.preventDefault(); sendCmd('stim -1 0'); }
-      else if (k==='d') { e.preventDefault(); sendCmd('stim 1 0'); }
+      const cmds = {w:'stim 0 -1', s:'stim 0 1', a:'stim -1 0', d:'stim 1 0'};
+      if (cmds[k]) {
+        e.preventDefault();
+        e.stopPropagation();
+        send(cmds[k]);
+        fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:cmds[k]})}).catch(()=>{});
+      }
     };
-    document.addEventListener('keydown', down, true);
-    return () => { document.removeEventListener('keydown', down, true); };
-  },[wasd,send]);
+    window.addEventListener('keydown', down);
+    return () => window.removeEventListener('keydown', down);
+  },[wasd, send]);
 
   const p=frame?.params||{R:13,T:10,m:0.15,s:0.015,kn:1,gn:1,b:[1]};
   const w=frame?.width||128,h=frame?.height||128;
@@ -149,7 +150,7 @@ export default function App() {
           <span style={{width:1,background:'var(--border)',height:20}}/>
           {['quad','2d','3d'].map(m=><button key={m} className={`btn ${view===m?'active':''}`} onClick={()=>setView(m)}>{m.toUpperCase()}</button>)}
           <span style={{width:1,background:'var(--border)',height:20}}/>
-          <button className={`btn ${wasd?'active':''}`} title="WASD Steering: deposits a chemical stimulus near the organism to attract it in that direction (like chemotaxis). W=up A=left S=down D=right" onClick={()=>setWasd(!wasd)}>WASD{wasd?' ●':''}</button>
+          <button className={`btn ${wasd?'active':''}`} title="WASD: move the organism around. Press to toggle, then use W/A/S/D keys. Click anywhere outside input fields first." onClick={(e)=>{setWasd(w=>!w);e.target.blur();}}>WASD{wasd?' ●':''}</button>
         </div>
         <span style={{marginLeft:'auto',fontSize:10,color:'var(--text-dim)',fontFamily:'monospace'}}>
           gen {frame?.gen||0} | m={( frame?.mass||0).toFixed(1)} | {frame?.name||''}

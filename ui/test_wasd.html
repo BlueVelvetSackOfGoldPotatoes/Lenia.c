@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head><title>WASD Test</title></head>
+<body style="background:#111;color:#fff;font-family:monospace;padding:20px">
+<h2>WASD WebSocket Test</h2>
+<p>This page tests if WASD keypresses reach the Lenia server.</p>
+<p>Open browser console (F12) to see messages.</p>
+<div id="log" style="white-space:pre;font-size:12px;background:#222;padding:10px;height:400px;overflow-y:auto"></div>
+<script>
+const log = document.getElementById('log');
+function addLog(msg) { log.textContent += msg + '\n'; log.scrollTop = log.scrollHeight; console.log(msg); }
+
+// Connect WebSocket
+const ws = new WebSocket('ws://localhost:3100');
+ws.onopen = () => addLog('WS connected');
+ws.onclose = () => addLog('WS disconnected');
+ws.onerror = (e) => addLog('WS error: ' + e);
+ws.onmessage = (e) => {
+  try {
+    const d = JSON.parse(e.data);
+    // Only log every 10th frame to avoid spam
+    if (d.gen % 10 === 0) addLog('Frame: gen=' + d.gen + ' mass=' + d.mass?.toFixed(1));
+  } catch(err) {}
+};
+
+// Test 1: Can we send via WebSocket?
+setTimeout(() => {
+  addLog('--- Test 1: Sending "pause" via WS ---');
+  ws.send('pause');
+  addLog('Sent "pause"');
+}, 2000);
+
+setTimeout(() => {
+  addLog('--- Test 2: Sending "run" via WS ---');
+  ws.send('run');
+  addLog('Sent "run"');
+}, 4000);
+
+setTimeout(() => {
+  addLog('--- Test 3: Sending "stim 1 0" via WS ---');
+  ws.send('stim 1 0');
+  addLog('Sent "stim 1 0"');
+}, 6000);
+
+setTimeout(() => {
+  addLog('--- Test 4: Sending "stim 1 0" via HTTP ---');
+  fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:'stim 1 0'})})
+    .then(r => r.json())
+    .then(d => addLog('HTTP response: ' + JSON.stringify(d)))
+    .catch(e => addLog('HTTP error: ' + e));
+}, 8000);
+
+// Test 5: Keypress detection
+document.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  addLog('KEY: "' + k + '" (wasd=' + 'wasd'.includes(k) + ')');
+  if ('wasd'.includes(k)) {
+    e.preventDefault();
+    const cmds = {w:'stim 0 -1', a:'stim -1 0', s:'stim 0 1', d:'stim 1 0'};
+    const cmd = cmds[k];
+    addLog('  Sending via WS: "' + cmd + '"');
+    if (ws.readyState === 1) {
+      ws.send(cmd);
+      addLog('  WS send OK (readyState=' + ws.readyState + ')');
+    } else {
+      addLog('  WS NOT ready (readyState=' + ws.readyState + ')');
+    }
+    addLog('  Sending via HTTP...');
+    fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd})})
+      .then(r => r.json())
+      .then(d => addLog('  HTTP response: ' + JSON.stringify(d)))
+      .catch(e => addLog('  HTTP error: ' + e));
+  }
+}, true);
+
+addLog('Listening for keystrokes... Press W/A/S/D');
+</script>
+</body>
+</html>
