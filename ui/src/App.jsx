@@ -113,13 +113,14 @@ function SimCanvas3D({ frame, zoom }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const onDown = (e) => { s.dragging = true; s.lastX = e.clientX; s.lastY = e.clientY; };
-    const onMove = (e) => { if (!s.dragging) return; s.ry += (e.clientX - s.lastX) * 0.4; s.rx += (e.clientY - s.lastY) * 0.4; s.lastX = e.clientX; s.lastY = e.clientY; };
+    const onDown = (e) => { e.stopPropagation(); s.dragging = true; s.lastX = e.clientX; s.lastY = e.clientY; };
+    const onMove = (e) => { if (!s.dragging) return; e.stopPropagation(); s.ry += (e.clientX - s.lastX) * 0.4; s.rx += (e.clientY - s.lastY) * 0.4; s.lastX = e.clientX; s.lastY = e.clientY; };
     const onUp = () => { s.dragging = false; };
     canvas.addEventListener('mousedown', onDown);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { canvas.removeEventListener('mousedown', onDown); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseup', onUp);
+    canvas.addEventListener('mouseleave', onUp);
+    return () => { canvas.removeEventListener('mousedown', onDown); canvas.removeEventListener('mousemove', onMove); canvas.removeEventListener('mouseup', onUp); canvas.removeEventListener('mouseleave', onUp); };
   }, []);
 
   useEffect(() => {
